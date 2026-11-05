@@ -6,7 +6,7 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-$script:AppVersion = '2.0'
+$script:AppVersion = '1.0.3'
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -59,6 +59,7 @@ function Select-TargetFolders ($Owner, $Folders) {
     $dialog.StartPosition = 'CenterParent'
     $dialog.Font = New-Object Drawing.Font('Segoe UI', 9)
     $dialog.BackColor = [Drawing.Color]::FromArgb(245, 247, 250)
+    $dialog.MinimizeBox = $false
     $dialog.ShowInTaskbar = $false
     $hint = New-Object Windows.Forms.Label
     $hint.Text = "Отметьте папки относительно профиля пользователя.`r`nПосле применения нажмите «Сохранить параметры» в основном окне."
@@ -209,6 +210,7 @@ $form = New-Object System.Windows.Forms.Form
 $form.Text = "RDS Profile Migration Toolkit — версия $script:AppVersion"
 $form.Size = New-Object System.Drawing.Size(1040, 750)
 $form.MinimumSize = New-Object System.Drawing.Size(1040, 750)
+$form.ShowInTaskbar = $true
 $form.StartPosition = "CenterScreen"
 $form.BackColor = [System.Drawing.Color]::FromArgb(245, 247, 250)
 $form.Font = New-Object System.Drawing.Font("Segoe UI", 9)
@@ -264,11 +266,21 @@ $btnHelp.Text = "Справка / Помощь (?)"
 $btnHelp.Size = New-Object System.Drawing.Size(170, 30)
 $btnHelp.Location = New-Object System.Drawing.Point(830, 17)
 $btnHelp.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right
-$btnHelp.BackColor = [System.Drawing.Color]::FromArgb(41, 128, 185)
-$btnHelp.ForeColor = [System.Drawing.Color]::White
-$btnHelp.FlatStyle = "Flat"
-$btnHelp.FlatAppearance.BorderSize = 0
-$btnHelp.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
+function Set-MainButtonStyle ([Windows.Forms.Button]$Button) {
+    $Button.Font = $btnHelp.Font
+    $Button.UseVisualStyleBackColor = $false
+    $Button.FlatStyle = 'Flat'
+    $Button.FlatAppearance.BorderSize = 0
+    $Button.BackColor = [Drawing.Color]::FromArgb(41,128,185)
+    $Button.ForeColor = [Drawing.Color]::White
+    $Button.Add_EnabledChanged({
+        param($sender,$eventArgs)
+        $sender.BackColor = if ($sender.Enabled) { [Drawing.Color]::FromArgb(41,128,185) } else { [Drawing.Color]::FromArgb(202,212,222) }
+    })
+    if (-not $Button.Enabled) { $Button.BackColor = [Drawing.Color]::FromArgb(202,212,222) }
+}
+$btnHelp.Font = New-Object Drawing.Font("Segoe UI",9,[Drawing.FontStyle]::Bold)
+Set-MainButtonStyle $btnHelp
 $tooltip.SetToolTip($btnHelp, "Открыть подробное руководство по каждому шагу и кнопке миграции")
 $pnlHeader.Controls.Add($btnHelp)
 
@@ -336,7 +348,7 @@ $grpSettings.Controls.Add($numLimit)
 $btnSaveCfg = New-Object System.Windows.Forms.Button
 $btnSaveCfg.Text = "Сохранить параметры"
 $btnSaveCfg.Size = New-Object System.Drawing.Size(195, 26)
-$btnSaveCfg.BackColor = [System.Drawing.Color]::FromArgb(235, 240, 248)
+Set-MainButtonStyle $btnSaveCfg
 $grpSettings.Controls.Add($btnSaveCfg)
 
 # Целевое OU
@@ -354,7 +366,7 @@ $grpSettings.Controls.Add($txtOU)
 $btnFolders = New-Object System.Windows.Forms.Button
 $btnFolders.Text = "Папки переноса ($($Global:Config.TargetFolders.Count))"
 $btnFolders.Size = New-Object Drawing.Size(195, 26)
-$btnFolders.BackColor = [Drawing.Color]::FromArgb(235, 240, 248)
+Set-MainButtonStyle $btnFolders
 $grpSettings.Controls.Add($btnFolders)
 $tooltip.SetToolTip($btnFolders, ($Global:Config.TargetFolders -join '; '))
 $btnFolders.Add_Click({
@@ -443,12 +455,14 @@ $btnSelectAll = New-Object System.Windows.Forms.Button
 $btnSelectAll.Text = "Выбрать все"
 $btnSelectAll.Size = New-Object System.Drawing.Size(95, 26)
 $btnSelectAll.Location = New-Object System.Drawing.Point(0, 2)
+Set-MainButtonStyle $btnSelectAll
 $pnlGridTools.Controls.Add($btnSelectAll)
 
 $btnDeselectAll = New-Object System.Windows.Forms.Button
 $btnDeselectAll.Text = "Снять выбор"
 $btnDeselectAll.Size = New-Object System.Drawing.Size(95, 26)
 $btnDeselectAll.Location = New-Object System.Drawing.Point(100, 2)
+Set-MainButtonStyle $btnDeselectAll
 $pnlGridTools.Controls.Add($btnDeselectAll)
 
 # Фильтр "Показать только выбранные"
@@ -486,11 +500,13 @@ $btnSaveList.Text = 'Сохранить список'
 $btnSaveList.SetBounds(733,2,125,26)
 $btnSaveList.Anchor = 'Top,Right'
 $btnSaveList.Enabled = $false
+Set-MainButtonStyle $btnSaveList
 $pnlGridTools.Controls.Add($btnSaveList)
 $btnLoadList = New-Object Windows.Forms.Button
 $btnLoadList.Text = 'Загрузить список'
 $btnLoadList.SetBounds(865,2,125,26)
 $btnLoadList.Anchor = 'Top,Right'
+Set-MainButtonStyle $btnLoadList
 $pnlGridTools.Controls.Add($btnLoadList)
 
 function Save-AuditList ($Grid, $Context, [string]$Path) {
@@ -653,7 +669,7 @@ $pnlActions.Controls.Add($btnACL)
 $btnValidate = Create-ActionButton "5. Валидация профилей" $stepReadyColor "Шаг 5: Проверка отмеченных профилей: SID, путь, NTUSER.DAT, TargetFolders, состояние загрузки и базовые ACL."
 $pnlActions.Controls.Add($btnValidate)
 
-$btnShortcuts = Create-ActionButton "6. Проверка ярлыков" $stepReadyColor "Шаг 6: Проверка ярлыков на рабочем столе отмеченных пользователей. Исправление ярлыков Яндекс Браузера и удаление битых ярлыков подтверждаются отдельно."
+$btnShortcuts = Create-ActionButton "6. Проверка ярлыков" $stepReadyColor "Шаг 6: Проверка ярлыков на рабочем столе отмеченных пользователей. Выберите действие для каждого ярлыка в едином списке."
 $pnlActions.Controls.Add($btnShortcuts)
 
 $btnFixRoot = Create-ActionButton "7. Безопасность C:\Users" $stepReadyColor "Шаг 7: Изменяет ACL каталога из поля «Целевая папка» независимо от галочек. Изоляцию каждого профиля проверяют отдельно."
@@ -753,7 +769,7 @@ $btnExpandLog = New-Object System.Windows.Forms.Button
 $btnExpandLog.Text = "Развернуть журнал"
 $btnExpandLog.SetBounds(850, 581, 160, 25)
 $btnExpandLog.Anchor = 'Bottom, Right'
-$btnExpandLog.BackColor = $btnSaveCfg.BackColor
+Set-MainButtonStyle $btnExpandLog
 $form.Controls.Add($btnExpandLog)
 $script:logWindow = $null
 $script:expandedLog = $null
@@ -802,6 +818,8 @@ function Write-GuiLog ($msg, $type = "INFO") {
 # Окно красивой справки в виде вкладок и карточек
 $btnHelp.Add_Click({
     $helpForm = New-Object System.Windows.Forms.Form
+    $helpForm.MinimizeBox = $false
+    $helpForm.ShowInTaskbar = $false
     $helpForm.Text = "Справочный центр ProfileMigrator"
     $helpForm.Size = New-Object System.Drawing.Size(960, 690)
     $helpForm.MinimumSize = New-Object System.Drawing.Size(960, 690)
@@ -933,7 +951,7 @@ $btnHelp.Add_Click({
         "3. Докачка дельты (/XO)|• Выполняет тот же перенос для отмеченных пользователей, добавляя /XO: пропускает файлы источника, которые старее соответствующих файлов на цели.`r`n• Robocopy сравнивает текущее состояние файлов; дата первой миграции не хранится. Новые и отличающиеся файлы копируются с учетом /XO.`r`n• При отсутствии профиля и папки создает профиль Windows, затем применяет ACL. Если папка уже есть, но SID не зарегистрирован, требуется сначала шаг 2; дубликат папки не создается.`r`n• NTUSER.DAT сохраняется; лишние файлы на цели не удаляются. Пользователь не должен входить на целевой сервер во время копирования.`r`n• Время выполнения зависит от объема данных, сети и дисков. После докачки повторите валидацию.",
         "4. Изоляция прав ACL|• Работает с отмеченными, зарегистрированными и незагруженными профилями. Эта же настройка вызывается при миграции и докачке.`r`n• На корне профиля отключает наследование с сохранением унаследованных записей как явных (/inheritance:d).`r`n• Удаляет записи Everyone, Authenticated Users и Users в дереве профиля. Владельцем корня назначает пользователя по SID.`r`n• Выдает FullControl пользователю, SYSTEM и Administrators на корень, NTUSER.DAT и рекурсивно на существующие папки TargetFolders и настроек 1С.`r`n• Остальные явные разрешения не очищаются. Операция не является полной проверкой всех возможных доступов к профилю.",
         "5. Валидация профилей|• Проверяет только отмеченных пользователей и не копирует данные, не создает профили и не исправляет ACL.`r`n• Проверяет SID из AD, регистрацию и путь ProfileList, конфликты .bak, наличие непустого NTUSER.DAT и допустимое состояние целевого профиля.`r`n• Проверяет наличие всех папок TargetFolders; затем базовые FullControl для пользователя, SYSTEM и Administrators на корне, NTUSER.DAT и этих папках.`r`n• Отметка «1С» в примечании означает только наличие ibases.v8i. Его отсутствие само по себе не запрещает статус «Готов».`r`n• «Готов» — результат перечисленных проверок. Содержимое файлов, права каждого вложенного файла, вход в RDS и работу приложений проверяют отдельно.",
-        "6. Проверка ярлыков|• Ищет файлы .lnk в Desktop и его подпапках только у отмеченных пользователей с зарегистрированным профилем. Поиск и подтвержденное удаление доступны при открытом сеансе пользователя.`r`n• В список попадают ярлыки с непустой целью, для которой не найден доступный файл или каталог. Для ярлыков профильной установки Яндекс Браузера отдельное окно показывает старый путь и найденный browser.exe в Program Files. После подтверждения изменяется цель с сохранением аргументов. Меню «Пуск», .url и другие папки не сканируются.`r`n• Перед удалением показывает пользователя, путь ярлыка и цель. Отмена поиска или закрытие списка сохраняет все файлы; удаление требует подтверждения.`r`n• Перед удалением повторно проверяет профиль и цель; изменившиеся ярлыки и ярлыки с доступной целью пропускает.`r`n• Недоступный сетевой ресурс тоже может попасть в список. Проверьте его доступность. Удаляются только перечисленные файлы .lnk.",
+        "6. Проверка ярлыков|• Ищет файлы .lnk в Desktop и его подпапках только у отмеченных пользователей с зарегистрированным профилем. Поиск и подтвержденное удаление доступны при открытом сеансе пользователя.`r`n• В список попадают ярлыки с непустой целью, для которой не найден доступный файл или каталог. Для целей в AppData другого профиля предлагает существующий файл по тому же относительному пути у владельца ярлыка. Можно выбрать другую цель вручную; отметьте строки галочками и назначьте «Заменить» или «Удалить». Кнопки «Выбрать все» и «Снять выбор» меняют отметки. «Применить» выполняет только назначенные действия у отмеченных строк. Для ярлыков профильной установки Яндекс Браузера общий список показывает старый путь и найденный browser.exe в Program Files. После подтверждения изменяется цель с сохранением аргументов. Меню «Пуск», .url и другие папки не сканируются.`r`n• Перед удалением показывает пользователя, путь ярлыка и цель. Отмена поиска или закрытие списка сохраняет все файлы; удаление требует подтверждения.`r`n• Перед удалением повторно проверяет профиль и цель; изменившиеся ярлыки и ярлыки с доступной целью пропускает.`r`n• Недоступный сетевой ресурс тоже может попасть в список. Проверьте его доступность. Удаляются только перечисленные файлы .lnk.",
         "7. Безопасность C:\Users|• Меняет ACL каталога из поля «Целевая папка» (по умолчанию C:\Users), независимо от отметок пользователей.`r`n• Удаляет на этом каталоге записи Everyone и Users, затем выдает Users чтение/выполнение, создание файлов и подпапок: (CI)(RX,WD,AD). Права наследуются подпапками.`r`n• Не отключает наследование и не выполняет изоляцию каждого профиля. Защита чужих профилей зависит от их фактических ACL.`r`n• На этом шаге коды завершения icacls не проверяются. Сообщение о завершении не заменяет проверку итоговых прав.",
         "Остановить процесс|• Запрашивает остановку текущей операции; если она запустила Robocopy или icacls, завершает этот процесс.`r`n• Запрос AD или файловая проверка могут завершиться до обработки отмены: мгновенная остановка не гарантируется.`r`n• Уже созданные профили, скопированные файлы, примененные ACL и удаленные ярлыки не откатываются.`r`n• Кнопка доступна во время операции. После остановки проверьте журнал и состояние затронутых профилей."
     )
@@ -970,7 +988,7 @@ $btnHelp.Add_Click({
         'Специализированное ПО|Программа копирует пользовательские файлы приложений из папок, указанных в TargetFolders. Сами приложения нужно установить на целевом сервере отдельно. Кроме отдельной опции Outlook, настройки из реестра не переносятся. Утилита не выполняет активацию лицензий, установку сертификатов или настройку приложений.',
         'Выбор папок приложений в программе|Настройка переноса: используется pm_config.json рядом с EXE. Если файла еще нет, он создается при первом запуске. Нажмите «Папки переноса» в основном окне, отметьте нужные папки или добавьте свои, затем нажмите «Применить» и «Сохранить параметры». Выбор используется при миграции и валидации, а после сохранения восстанавливается при следующем запуске. Вручную редактировать JSON не требуется. Пути задаются относительно папки профиля пользователя, например AppData\Roaming\Vendor\Product или WorkData. Абсолютные пути, UNC и выход через .. не поддерживаются; данные за пределами профиля переносятся отдельно.',
         'Стандартные папки и настройки 1С|Если TargetFolders отсутствует, используются Desktop, Documents и Downloads. Явно заданный массив заменяет этот список: сохраните в нем стандартные папки, если их тоже нужно перенести. Настройки запуска 1С (ibases.v8i и 1CEStart.cfg) копируются отдельно при наличии на источнике.',
-        'Классический Outlook → Outlook 2021/2024 (экспериментально)|В окне подтверждения шага 2 включите перенос Outlook. Завершите сеансы пользователя на обоих серверах. Сбор идет с исходного сервера по SMB. На источнике проверяются профили Outlook 2010, Office 15.0 (2013) и Office 16.0 (2016 и новее). В пределах одной ветки используется профиль по умолчанию или единственный профиль. При неоднозначности администратор выбирает профиль. На цели используется ветка Office 16.0. Выберите папки с PST, которые еще нужно скопировать. Уже перенесенный PST по прежнему пути используется независимо от выбора папок. Для автоматической привязки сохраняйте абсолютные пути. На цели существующие PST сохраняются, а при наличии почтового профиля импорт настроек пропускается. После первого входа проверьте авторизацию, доставку POP3 в нужный файл и синхронизацию папок IMAP.',
+        'Классический Outlook → Outlook 2021/2024 (экспериментально)|В окне подтверждения шага 2 включите перенос Outlook. Завершите сеансы пользователя на обоих серверах. Сбор идет с исходного сервера по SMB. На источнике проверяются профили Outlook 2010, Office 15.0 (2013) и Office 16.0 (2016 и новее). В пределах одной ветки используется профиль по умолчанию или единственный профиль. При неоднозначности администратор выбирает профиль. На цели используется ветка Office 16.0. Выберите папки с PST, которые еще нужно скопировать. Уже перенесенный PST по прежнему пути используется независимо от выбора папок. При отсутствии указанного PST или OST, а для IMAP также при отсутствии файлов .pst/.ost в AppData\Local\Microsoft\Outlook на цели настройки пропускаются со статусом «Внимание». Для автоматической привязки сохраняйте абсолютные пути. На цели существующие PST сохраняются, а при наличии почтового профиля импорт настроек пропускается. После первого входа проверьте авторизацию, доставку POP3 в нужный файл и синхронизацию папок IMAP.',
         'Пример выбора папок Thunderbird|Пример для Thunderbird: в окне «Папки переноса» отметьте Desktop, Documents и Downloads. В поле «Другая папка» введите AppData\Roaming\Thunderbird и нажмите «Добавить». Нажмите «Применить», затем «Сохранить параметры». Этот список будет записан в TargetFolders файла pm_config.json.',
         'Перенос Thunderbird|Thunderbird: при стандартной настройке папка AppData\Roaming\Thunderbird содержит почтовые профили, их настройки и сохраненные локально письма. Перед копированием закройте Thunderbird на обоих серверах; используйте одинаковые версии приложения. Нестандартные папки с почтой внутри профиля Windows добавьте в TargetFolders; папки вне профиля перенесите отдельно. При необходимости настройте новые пути в Thunderbird. После переноса проверьте открытие нужного профиля и доступ к почте.',
         'КриптоПро CSP и электронная подпись|КриптоПро CSP и электронная подпись: автоматическое восстановление сертификатов и ключевых контейнеров в этой программе не реализовано. Добавление папки в TargetFolders копирует только ее файлы. Перенос или подключение контейнера, установку личного сертификата и его привязку к закрытому ключу выполняйте отдельно штатными средствами КриптоПро с учетом типа хранилища или носителя. Универсальной папки, копирование которой восстанавливает электронную подпись, нет. После настройки проверьте подпись под учетной записью пользователя.',
@@ -985,6 +1003,7 @@ $btnHelp.Add_Click({
 
 $btnAbout.Add_Click({
     $aboutForm = New-Object System.Windows.Forms.Form
+    $aboutForm.MinimizeBox = $false
     $aboutForm.Text = "О программе — ProfileMigrator"
     $aboutForm.ClientSize = New-Object System.Drawing.Size(900, 700)
     $aboutForm.MinimumSize = New-Object System.Drawing.Size(800, 600)
@@ -1277,6 +1296,11 @@ function Update-Progress ($val, $status = "") {
         $Global:lblProgressTitle.Text = "Прогресс операции: $status"
     }
     [System.Windows.Forms.Application]::DoEvents()
+}
+
+# These buttons remain interactive while the form displays the wait cursor.
+foreach ($button in @($btnHelp, $btnAbout, $btnExpandLog, $btnStop)) {
+    $button.Cursor = [System.Windows.Forms.Cursors]::Arrow
 }
 
 function Set-UiBusy ($busy, $statusText = "") {
@@ -1932,6 +1956,12 @@ function Read-OutlookSections ($Key, [string]$RelativePath) {
     }
 }
 
+function Skip-OutlookMissingData ([string]$Reason) {
+    $exception = New-Object System.IO.FileNotFoundException($Reason)
+    $exception.Data['OutlookDataMissing'] = $true
+    throw $exception
+}
+
 function Test-OutlookMigrationPlan ($Sections, $Profile, [string]$SourceUserRoot) {
     $accounts = 0
     $pop = 0
@@ -1973,10 +2003,13 @@ function Test-OutlookMigrationPlan ($Sections, $Profile, [string]$SourceUserRoot
             if ((Join-Path $Profile.Path $relative) -ne $path) { throw "На цели изменится абсолютный путь PST: $path. Требуется ручная привязка." }
             Assert-ProfileTargetPath $Profile.Path $relative
             if ([IO.Path]::GetExtension($path) -eq '.ost') {
+                if (-not (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction Stop)) {
+                    Skip-OutlookMissingData "OST не найден на цели: $path"
+                }
                 $imapCaches++
                 continue
             }
-            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "PST не найден на цели: $path. Проверьте файл и выберите его исходную папку для копирования при необходимости." }
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction Stop)) { Skip-OutlookMissingData "PST не найден на цели: $path. Проверьте файл и выберите его исходную папку для копирования при необходимости." }
             Write-GuiLog "[$($Profile.UserName)] Найден PST на цели: $path" 'INFO'
             $stores++
         }
@@ -1984,6 +2017,16 @@ function Test-OutlookMigrationPlan ($Sections, $Profile, [string]$SourceUserRoot
     if (-not $accounts) { throw 'В исходном профиле не найдены учетные записи POP3 или IMAP.' }
     if ($imapCaches -and $accounts -eq $pop) { throw 'В профиле найден OST без учетной записи IMAP.' }
     if ($pop -and -not $stores) { throw 'Не удалось определить PST профиля POP3.' }
+    if ($accounts -gt $pop) {
+        $relativeFolder = 'AppData\Local\Microsoft\Outlook'
+        Assert-ProfileTargetPath $Profile.Path $relativeFolder
+        $folder = Join-Path $Profile.Path $relativeFolder
+        $mailFile = if (Test-Path -LiteralPath $folder -PathType Container -ErrorAction Stop) {
+            Get-ChildItem -LiteralPath $folder -File -Force -ErrorAction Stop |
+                Where-Object { $_.Extension -in '.pst','.ost' } | Select-Object -First 1
+        }
+        if (-not $mailFile) { Skip-OutlookMissingData "Нет файлов данных IMAP (.pst или .ost) на цели: $folder" }
+    }
     return $accounts
 }
 
@@ -2028,6 +2071,7 @@ function Select-OutlookSourceProfile ($Candidates, $UserName) {
     try {
         $dialog.Text = "Исходный профиль Outlook — $UserName"
         $dialog.ClientSize = New-Object Drawing.Size(540,130)
+        $dialog.MinimizeBox = $false
         $dialog.FormBorderStyle = 'FixedDialog'
         $dialog.StartPosition = 'CenterParent'
         $dialog.MaximizeBox = $false
@@ -2234,6 +2278,10 @@ function Invoke-UserFileSync ($UserName, $isDelta, [switch]$MigrateOutlook) {
     if ($copyOk -and $MigrateOutlook -and -not $isDelta -and -not $Global:CancelRequested) {
         try { Import-ClassicOutlookProfile $profile $SrcBase }
         catch {
+            if ($_.Exception.Data['OutlookDataMissing']) {
+                Write-GuiLog "[$UserName] Файлы скопированы. Настройки Outlook пропущены. $($_.Exception.Message)" 'WARN'
+                return 'OutlookDataMissing'
+            }
             Write-GuiLog "[$UserName] Файлы скопированы. Перенос настроек Outlook не завершен: $($_.Exception.Message)" 'ERROR'
             return $false
         }
@@ -2313,6 +2361,7 @@ $btnSync.Add_Click({
         Write-GuiLog "Старт миграции $($selectedRows.Count) профилей $mode." "INFO"
         $cur = 0
         $failed = 0
+        $warnings = 0
 
         foreach ($row in $selectedRows) {
             if ($Global:CancelRequested) {
@@ -2337,7 +2386,11 @@ $btnSync.Add_Click({
                 break
             }
 
-            if ($ok) {
+            if ($ok -is [string] -and $ok -eq 'OutlookDataMissing') {
+                $warnings++
+                $row.Cells[5].Value = 'Внимание'
+                $row.Cells[5].Style.ForeColor = [System.Drawing.Color]::DarkOrange
+            } elseif ($ok) {
                 $row.Cells[5].Value = "Скопирован"
                 $row.Cells[5].Style.ForeColor = [System.Drawing.Color]::Green
             } else {
@@ -2349,8 +2402,8 @@ $btnSync.Add_Click({
         }
 
         if (-not $Global:CancelRequested) {
-            Write-GuiLog "Миграция завершена. Успешно: $($cur - $failed); ошибок: $failed." $(if ($failed) { 'WARN' } else { 'SUCCESS' })
-            Update-Progress 100 "Миграция завершена, ошибок: $failed"
+            Write-GuiLog "Миграция завершена. Успешно: $($cur - $failed - $warnings); с предупреждениями: $warnings; ошибок: $failed." $(if ($failed -or $warnings) { 'WARN' } else { 'SUCCESS' })
+            Update-Progress 100 "Миграция завершена, с предупреждениями: $warnings, ошибок: $failed"
         } else {
             Update-Progress $Global:pbar.Value "Миграция остановлена пользователем"
         }
@@ -2512,20 +2565,27 @@ function Get-BrokenUserShortcuts ([string[]]$UserNames, $Stats) {
                         $Stats.Checked++
                         if ([string]::IsNullOrWhiteSpace($target)) { $Stats.NoPath++ }
                         $newTarget = $null
-                        $localBrowser = Join-Path $profile.Path 'AppData\Local\Yandex\YandexBrowser\Application\browser.exe'
-                        if ($target -eq $localBrowser) {
-                            if (-not $systemBrowser) {
-                                Write-GuiLog "[$user] Ярлык сохранен: Яндекс Браузер не найден в Program Files. $($link.FullName)" 'WARN'
-                                $Stats.Skipped++
-                                continue
+                        # Resolve profile-local applications against the owner of the shortcut.
+                        foreach ($root in @((Split-Path $profile.Path -Parent), (Join-Path $env:SystemDrive 'Users')) | Select-Object -Unique) {
+                            $prefix = $root.TrimEnd('\') + '\'
+                            if (-not $target -or -not $target.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)) { continue }
+                            if ($target.Substring($prefix.Length) -notmatch '^[^\\]+\\(AppData\\(?:Local|Roaming)\\.+)$') { continue }
+                            $suffix = $Matches[1]
+                            if ($suffix.Split('\') -contains '..' -or $suffix.Contains(':')) { break }
+                            Assert-ProfileTargetPath $profile.Path $suffix
+                            $owned = Join-Path $profile.Path $suffix
+                            if ($suffix -eq 'AppData\Local\Yandex\YandexBrowser\Application\browser.exe' -and $systemBrowser) {
+                                $newTarget = $systemBrowser
+                            } elseif ($owned -ne $target -and [IO.File]::Exists($owned)) {
+                                $newTarget = $owned
                             }
-                            $newTarget = $systemBrowser
+                            break
                         }
                         if ($newTarget -or (-not [string]::IsNullOrWhiteSpace($target) -and
                             -not [IO.File]::Exists($target) -and -not [IO.Directory]::Exists($target))) {
                             [pscustomobject]@{
                                 UserName = $user; Sid = $profile.Sid; ProfilePath = $profile.Path
-                                ShortcutPath = $link.FullName; RelativePath = $relativePath; TargetPath = $target; NewTarget = $newTarget
+                                ShortcutPath = $link.FullName; RelativePath = $relativePath; TargetPath = $target; NewTarget = $newTarget; Action = $(if ($newTarget) { 'Заменить' } else { 'Пропустить' })
                             }
                         }
                     } catch {
@@ -2545,10 +2605,10 @@ function Get-BrokenUserShortcuts ([string[]]$UserNames, $Stats) {
     }
 }
 
-function Show-ShortcutCleanupConfirmation ([object[]]$Shortcuts, [switch]$Repair) {
+function Show-ShortcutCleanupConfirmation ([object[]]$Shortcuts) {
     $dialog = New-Object Windows.Forms.Form
     try {
-        $dialog.Text = 'Подтверждение удаления ярлыков'
+        $dialog.Text = 'Проверка ярлыков'
         $dialog.Size = New-Object Drawing.Size(1100, 620)
         $dialog.MinimumSize = New-Object Drawing.Size(860, 420)
         $dialog.StartPosition = 'CenterParent'
@@ -2561,9 +2621,10 @@ function Show-ShortcutCleanupConfirmation ([object[]]$Shortcuts, [switch]$Repair
         $layout = New-Object Windows.Forms.TableLayoutPanel
         $layout.Dock = 'Fill'
         $layout.ColumnCount = 1
-        $layout.RowCount = 3
+        $layout.RowCount = 4
         [void]$layout.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle('Percent', 100)))
-        [void]$layout.RowStyles.Add((New-Object Windows.Forms.RowStyle('Absolute', 88)))
+        [void]$layout.RowStyles.Add((New-Object Windows.Forms.RowStyle('Absolute', 80)))
+        [void]$layout.RowStyles.Add((New-Object Windows.Forms.RowStyle('Absolute', 44)))
         [void]$layout.RowStyles.Add((New-Object Windows.Forms.RowStyle('Percent', 100)))
         [void]$layout.RowStyles.Add((New-Object Windows.Forms.RowStyle('Absolute', 60)))
         $dialog.Controls.Add($layout)
@@ -2574,11 +2635,7 @@ function Show-ShortcutCleanupConfirmation ([object[]]$Shortcuts, [switch]$Repair
         $heading.Padding = New-Object Windows.Forms.Padding(16, 12, 16, 8)
         $heading.BackColor = [Drawing.Color]::FromArgb(15, 23, 42)
         $heading.ForeColor = [Drawing.Color]::White
-        $heading.Text = "Найдено ярлыков с отсутствующей или недоступной целью: $($Shortcuts.Count).`r`nПроверьте список и доступность сетевых путей. Удалить перечисленные ярлыки?`r`nУдаляются только файлы .lnk; файлы и папки, на которые они указывают, не удаляются."
-        if ($Repair) {
-            $dialog.Text = 'Исправление ярлыков Яндекс Браузера'
-            $heading.Text = 'Проверьте старую и новую цель каждого ярлыка. Параметры запуска сохраняются.'
-        }
+        $heading.Text = "Отметьте ярлыки галочками и назначьте действие: «Заменить» или «Удалить».`r`nДля замены нужен путь в столбце «Новая цель». Вручную его можно задать кнопкой «Выбрать файл…» для текущей строки.`r`n«Применить» обработает только отмеченные строки с назначенным действием."
         $layout.Controls.Add($heading, 0, 0)
 
         $list = New-Object Windows.Forms.DataGridView
@@ -2607,16 +2664,53 @@ function Show-ShortcutCleanupConfirmation ([object[]]$Shortcuts, [switch]$Repair
         $list.Columns[0].FillWeight = 17
         $list.Columns[1].FillWeight = 43
         $list.Columns[2].FillWeight = 40
-        if ($Repair) {
-            $list.Columns[2].HeaderText = 'Было'
-            [void]$list.Columns.Add('NewTarget','Станет')
-            $list.Columns[3].FillWeight = 40
-        }
+        $list.Columns[2].HeaderText = 'Текущая цель'
+        [void]$list.Columns.Add('NewTarget','Новая цель')
+        $list.ReadOnly = $false
+        foreach ($column in $list.Columns) { $column.ReadOnly = $true }
+        [void]$list.Columns.Add('Action','Действие')
+        $list.Columns['Action'].ReadOnly = $true
+        $list.Columns['Action'].FillWeight = 18
+        $check = New-Object Windows.Forms.DataGridViewCheckBoxColumn
+        $check.Name = 'Checked'
+        $check.HeaderText = 'Выбор'
+        $check.AutoSizeMode = 'None'
+        $check.Width = 58
+        $check.ReadOnly = $false
+        $check.SortMode = 'NotSortable'
+        $list.Columns.Insert(0,$check)
         foreach ($item in $Shortcuts) {
-            $index = $list.Rows.Add($item.UserName, $item.ShortcutPath, $item.TargetPath)
-            if ($Repair) { $list.Rows[$index].Cells[3].Value = $item.NewTarget }
+            $index = $list.Rows.Add($false,$item.UserName,$item.ShortcutPath,$item.TargetPath,$item.NewTarget,'—')
+            $list.Rows[$index].Tag = $item
         }
-        $layout.Controls.Add($list, 0, 1)
+        $layout.Controls.Add($list, 0, 2)
+        $bar = New-Object Windows.Forms.FlowLayoutPanel
+        $bar.Dock = 'Fill'
+        $bar.Padding = New-Object Windows.Forms.Padding(9,3,0,0)
+        $layout.Controls.Add($bar, 0, 1)
+        function Add-ShortcutToolButton ($caption,$onClick) {
+            $button = New-Object Windows.Forms.Button
+            $button.Text = $caption
+            $button.AutoSize = $true
+            $button.Add_Click($onClick)
+            $bar.Controls.Add($button)
+        }
+        $setRows = {
+            param($change)
+            [void]$list.EndEdit()
+            $list.Tag = 'Batch'
+            try {
+                foreach ($r in $list.Rows) {
+                    if ($change -eq 'Все') { $r.Cells['Checked'].Value = $true }
+                    elseif ($change -eq 'Нет') { $r.Cells['Checked'].Value = $false }
+                    elseif ($r.Cells['Checked'].Value) { $r.Cells['Action'].Value = $change }
+                }
+            } finally { $list.Tag = $null; & $refresh }
+        }
+        Add-ShortcutToolButton 'Выбрать все' { & $setRows 'Все' }
+        Add-ShortcutToolButton 'Снять выбор' { & $setRows 'Нет' }
+        Add-ShortcutToolButton 'Заменить' { & $setRows 'Заменить' }
+        Add-ShortcutToolButton 'Удалить' { & $setRows 'Удалить' }
 
         $footer = New-Object Windows.Forms.FlowLayoutPanel
         $footer.Dock = 'Fill'
@@ -2633,20 +2727,52 @@ function Show-ShortcutCleanupConfirmation ([object[]]$Shortcuts, [switch]$Repair
         $cancel.FlatAppearance.BorderSize = 0
         $cancel.DialogResult = [Windows.Forms.DialogResult]::Cancel
         $delete = New-Object Windows.Forms.Button
-        $delete.Text = "Удалить ярлыки ($($Shortcuts.Count))"
-        $delete.Size = New-Object Drawing.Size(210, 32)
-        $delete.BackColor = [Drawing.Color]::FromArgb(192, 57, 43)
+        $delete.Size = New-Object Drawing.Size(340, 32)
+        $delete.BackColor = $stepReadyColor
         $delete.ForeColor = [Drawing.Color]::White
         $delete.FlatStyle = 'Flat'
-        $delete.FlatAppearance.BorderSize = 0
-        $delete.DialogResult = [Windows.Forms.DialogResult]::OK
-        $footer.Controls.Add($cancel)
-        if ($Repair) {
-            $delete.Text = "Исправить ярлыки ($($Shortcuts.Count))"
-            $delete.BackColor = $stepReadyColor
+        $refresh = {
+            $replaceCount = 0; $deleteCount = 0; $valid = $true
+            foreach ($r in $list.Rows) {
+                if (-not $r.Cells['Checked'].Value) { continue }
+                switch ($r.Cells['Action'].Value) {
+                    'Заменить' { $replaceCount++; if (-not $r.Tag.NewTarget) { $valid = $false } }
+                    'Удалить' { $deleteCount++ }
+                }
+            }
+            $delete.Text = "Применить: заменить $replaceCount, удалить $deleteCount"
+            $delete.Enabled = $valid -and ($replaceCount + $deleteCount -gt 0)
         }
+        $list.Add_CurrentCellDirtyStateChanged({ if ($list.IsCurrentCellDirty) { [void]$list.CommitEdit([Windows.Forms.DataGridViewDataErrorContexts]::Commit) } })
+        $list.Add_CellValueChanged({ if (-not $list.Tag) { & $refresh } })
+        $delete.Add_Click({
+            [void]$list.EndEdit()
+            foreach ($r in $list.Rows) { $r.Tag.Action = if ($r.Cells['Checked'].Value -and $r.Cells['Action'].Value -ne '—') { $r.Cells['Action'].Value } else { 'Пропустить' } }
+            $dialog.DialogResult = [Windows.Forms.DialogResult]::OK
+        })
+        & $refresh
+        $footer.Controls.Add($cancel)
         $footer.Controls.Add($delete)
-        $layout.Controls.Add($footer, 0, 2)
+        $choose = New-Object Windows.Forms.Button
+        $choose.Text = 'Выбрать файл…'
+        $choose.Size = New-Object Drawing.Size(145,32)
+        $bar.Controls.Add($choose)
+        $choose.Add_Click({
+            $row = $list.CurrentRow
+            if ($null -eq $row) { return }
+            $picker = New-Object Windows.Forms.OpenFileDialog
+            try {
+                $picker.Title = 'Новая цель для ' + $row.Tag.ShortcutPath
+                if ($picker.ShowDialog($dialog) -ne 'OK') { return }
+                if ([IO.Path]::GetExtension($picker.FileName) -eq '.lnk') { return }
+                $row.Tag.NewTarget = $picker.FileName
+                $row.Cells['NewTarget'].Value = $picker.FileName
+                $row.Cells['Checked'].Value = $true
+                $row.Cells['Action'].Value = 'Заменить'
+                & $refresh
+            } finally { $picker.Dispose() }
+        })
+        $layout.Controls.Add($footer, 0, 3)
         $dialog.CancelButton = $cancel
         $dialog.AcceptButton = $cancel
         $dialog.ActiveControl = $cancel
@@ -2680,15 +2806,15 @@ function Invoke-ConfirmedShortcutChanges ([object[]]$Shortcuts, [switch]$Repair)
                 if ($Repair) {
                     $shortcut = $shell.CreateShortcut($item.ShortcutPath)
                     try {
-                        if ($shortcut.TargetPath -ne $item.TargetPath -or (Find-SystemYandexBrowser) -ne $item.NewTarget) {
+                        if ($shortcut.TargetPath -ne $item.TargetPath -or -not [IO.File]::Exists($item.NewTarget)) {
                             $result.Skipped++
-                            Write-GuiLog "Изменился ярлык или установка браузера: $($item.ShortcutPath)" 'WARN'
+                            Write-GuiLog "Изменился ярлык или новая цель недоступна: $($item.ShortcutPath)" 'WARN'
                             continue
                         }
                         $shortcut.TargetPath = $item.NewTarget
                         $shortcut.Save()
                         $result.Repaired++
-                        Write-GuiLog "Исправлен ярлык Яндекс Браузера: $($item.ShortcutPath)" 'INFO'
+                        Write-GuiLog "Исправлен ярлык: $($item.ShortcutPath)" 'INFO'
                     } finally { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($shortcut) }
                     continue
                 }
@@ -2788,17 +2914,7 @@ $btnShortcuts.Add_Click({
             return
         }
         Write-GuiLog "Проверено ярлыков: $($stats.Checked); без файловой цели: $($stats.NoPath); пропущено профилей или ярлыков: $($stats.Skipped)." 'INFO'
-        $repairs = @($candidates | Where-Object { $_.NewTarget })
-        $candidates = @($candidates | Where-Object { -not $_.NewTarget })
-        if ($repairs.Count) {
-            if (Show-ShortcutCleanupConfirmation $repairs -Repair) {
-                $result = Invoke-ConfirmedShortcutChanges $repairs -Repair
-                $message = "Яндекс Браузер. Исправлено: $($result.Repaired); пропущено: $($result.Skipped); ошибок: $($result.Errors)."
-            } else { $message = 'Исправление ярлыков Яндекс Браузера отменено.' }
-            Write-GuiLog $message 'INFO'
-            Update-Progress 100 $message
-            if ($Global:CancelRequested -or -not $candidates.Count) { return }
-        }
+
         if ($candidates.Count -eq 0 -and ($stats.Skipped -or $stats.NoPath)) {
             Update-Progress 100 'Поиск завершен с пропусками'
             Write-GuiLog 'Среди проверенных файловых целей битых ярлыков не обнаружено. Часть объектов проверить не удалось.' 'WARN'
@@ -2809,15 +2925,18 @@ $btnShortcuts.Add_Click({
             Update-Progress 100 'Неработающие ярлыки не найдены'
             return
         }
-        Update-Progress 100 "Ожидание подтверждения удаления: $($candidates.Count) ярлыков"
+        Update-Progress 100 'Проверка списка ярлыков'
         if ($Global:CancelRequested -or -not (Show-ShortcutCleanupConfirmation $candidates)) {
-            Write-GuiLog 'Удаление ярлыков отменено. Ничего не удалено.' 'INFO'
-            Update-Progress 100 'Удаление отменено; ничего не удалено'
+            Write-GuiLog 'Обработка ярлыков отменена. Изменений нет.' 'INFO'
+            Update-Progress 100 'Обработка отменена'
             return
         }
-
-        $result = Invoke-ConfirmedShortcutChanges $candidates
-        $summary = "Удалено: $($result.Deleted); пропущено: $($result.Skipped); ошибок: $($result.Errors)."
+        $repairs = @($candidates | Where-Object { $_.Action -eq 'Заменить' -and $_.NewTarget })
+        $deletions = @($candidates | Where-Object { $_.Action -eq 'Удалить' })
+        $fixed = Invoke-ConfirmedShortcutChanges $repairs -Repair
+        $result = Invoke-ConfirmedShortcutChanges $deletions
+        $result.Errors += $fixed.Errors
+        $summary = "Исправлено: $($fixed.Repaired); удалено: $($result.Deleted); пропущено: $($candidates.Count - $repairs.Count - $deletions.Count + $result.Skipped + $fixed.Skipped); ошибок: $($result.Errors)."
         if ($Global:CancelRequested) {
             Write-GuiLog "Очистка остановлена. $summary" 'WARN'
             Update-Progress $Global:pbar.Value "Очистка остановлена. $summary"

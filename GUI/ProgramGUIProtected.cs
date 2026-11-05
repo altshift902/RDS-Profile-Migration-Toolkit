@@ -96,7 +96,7 @@ namespace ProfileMigratorGuiHost
                 // 3. Запуск PowerShell
                 ProcessStartInfo psInfo = new ProcessStartInfo();
                 psInfo.FileName = "powershell.exe";
-                psInfo.Arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"" + tempScript + "\"";
+                psInfo.Arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File \"" + tempScript + "\"";
                 psInfo.UseShellExecute = false;
                 // The script runs from a temporary directory; keep configuration beside the EXE.
                 psInfo.EnvironmentVariables["PROFILEMIGRATOR_CONFIG_PATH"] = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "pm_config.json");

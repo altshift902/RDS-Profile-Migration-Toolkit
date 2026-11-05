@@ -4,7 +4,7 @@ $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($path,[ref]$null,[ref]$errors)
 if ($errors) { throw ($errors -join ' ') }
 # Import only file-copy and validation functions. Never mount a hive in these tests.
-foreach ($name in @('Get-OutlookSourceProfiles','Select-OutlookSourceProfile','Copy-MissingOutlookPst','Assert-ProfileTargetPath','ConvertTo-LocalProfilePath','Test-OutlookMigrationPlan')) {
+foreach ($name in @('Skip-OutlookMissingData','Get-OutlookSourceProfiles','Select-OutlookSourceProfile','Copy-MissingOutlookPst','Assert-ProfileTargetPath','ConvertTo-LocalProfilePath','Test-OutlookMigrationPlan')) {
     $fn = $ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true)
     . ([scriptblock]::Create($fn.Extent.Text))
 }
@@ -49,6 +49,15 @@ try {
     $target = @{Path=$userFolder}
     if ((Test-OutlookMigrationPlan @($account,$store) $target $userFolder) -ne 1) { throw 'POP3/PST rejected' }
     $account.Values[0].Name = 'IMAP Server'
+    $cacheDir = Join-Path $userFolder 'AppData\Local\Microsoft\Outlook'
+    [void][IO.Directory]::CreateDirectory($cacheDir)
+    function Assert-MissingData ($sections) {
+        try { Test-OutlookMigrationPlan $sections $target $userFolder | Out-Null }
+        catch { if ($_.Exception.Data['OutlookDataMissing']) { return }; throw }
+        throw 'Missing Outlook data was accepted'
+    }
+    Assert-MissingData @($account,$store)
+    [IO.File]::WriteAllText("$cacheDir\cache.ost",'fixture')
     if ((Test-OutlookMigrationPlan @($account,$store) $target $userFolder) -ne 1) { throw 'IMAP rejected' }
     $aux = @{Path='9375CFF0413111d3B88A00104B2A6676\00000002';Values=@(@{Name='Service Name';Data=''})}
     foreach ($field in @('Account Name','clsid','MAPI Provider','Mini UID','Preferences UID','Service UID')) {
@@ -66,10 +75,12 @@ try {
     if ($reason -notlike '*00000002*MSEMS*Service Name*') { throw 'Unknown/mixed profile was not identified' }
     $Global:Config.TargetFolders=@('Desktop')
     if ((Test-OutlookMigrationPlan @($account,$store) $target $userFolder) -ne 1) { throw 'Existing PST in unselected Documents rejected' }
-    $cache = @{Path='imap';Values=@(@{Name='001f6700';Data="$dest\cache.ost"})}
+    $cache = @{Path='imap';Values=@(@{Name='001f6700';Data="$cacheDir\missing.ost"})}
+    Assert-MissingData @($account,$cache)
+    $cache.Values[0].Data = "$cacheDir\cache.ost"
     if ((Test-OutlookMigrationPlan @($account,$cache) $target $userFolder) -ne 1) { throw 'IMAP cache treated as required PST' }
     foreach ($case in @('missing','unsupported')) {
-        if ($case -eq 'missing') { $store.Values[0].Data = "$dest\absent.pst" }
+        if ($case -eq 'missing') { $store.Values[0].Data = "$dest\absent.pst"; Assert-MissingData @($account,$store) }
         if ($case -eq 'unsupported') { $Global:Config.TargetFolders=@('Documents'); $account.Values[0].Name='Other' }
         $rejected = $false
         try { Test-OutlookMigrationPlan @($account,$store) $target $userFolder | Out-Null } catch { $rejected=$true }

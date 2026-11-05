@@ -68,6 +68,7 @@ function Show-ShortcutCleanupConfirmation ($Shortcuts, [switch]$Repair) {
         Assert ($item.UserName -in @('checkedA', 'checkedB')) 'Unchecked user in preview'
         Assert (-not [string]::IsNullOrEmpty($item.TargetPath)) 'Missing preview target'
     }
+    foreach ($item in $Shortcuts) { if (-not $item.NewTarget) { $item.Action = 'Удалить' } }
     if ($script:onConfirm) { & $script:onConfirm }
     return $script:approve
 }
@@ -196,6 +197,29 @@ try {
         }
         Assert ((Get-ShortcutTarget $shell $script:links.unchecked) -ne $systemExe) 'Unchecked browser link modified'
     } finally { $env:ProgramW6432 = $oldPF }
+    Reset-Scenario
+    $relativeExe = 'AppData\Local\SkbKontur\Kontur.Admin.Abonent.exe'
+    $oldExe = Join-Path (Join-Path $fixtureRoot 'Support') $relativeExe
+    $ownerExe = Join-Path $script:profiles.checkedA.Path $relativeExe
+    [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($ownerExe))
+    [IO.File]::WriteAllText($ownerExe,'fixture')
+    New-TestShortcut $script:links.checkedA $oldExe
+    New-TestShortcut $script:links.checkedB $fixtureRoot
+    $script:approve = $true
+    & $handlers.btnShortcuts
+    Assert ((Get-ShortcutTarget $shell $script:links.checkedA) -eq $ownerExe) 'Shortcut was not mapped to its owner'
+    Reset-Scenario
+    $script:approve = $true
+    $script:onConfirm = { $a = $script:preview | Where-Object UserName -eq checkedA; $a.NewTarget = $ownerExe; $a.Action = 'Заменить'; ($script:preview | Where-Object UserName -eq checkedB).Action = 'Пропустить' }
+    & $handlers.btnShortcuts
+    Assert ((Get-ShortcutTarget $shell $script:links.checkedA) -eq $ownerExe) 'Manual replacement failed'
+    Assert ((Get-ShortcutTarget $shell $script:links.checkedB) -eq (Join-Path $fixtureRoot 'checkedB-missing.exe')) 'Manual repair affected another row'
+    Reset-Scenario
+    New-TestShortcut $script:links.checkedA $oldExe
+    $script:approve = $true
+    & $handlers.btnShortcuts
+    Assert ($script:confirmCalls -eq 1 -and $script:preview.Count -eq 2) 'Mixed candidates must share one preview'
+    Assert ((Get-ShortcutTarget $shell $script:links.checkedA) -eq $ownerExe -and -not [IO.File]::Exists($script:links.checkedB)) 'Mixed repair and deletion failed'
     Write-Output 'PASS: selected-only validation and cleanup; empty selection; preview before deletion; cancellation; changed/restored targets; loaded profiles; literal paths.'
 } finally {
     $gridUsers.Dispose()
