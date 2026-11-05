@@ -1,0 +1,10 @@
+dist/
+diagnostics/
+*.exe
+*.dmp
+*.log
+*.pdb
+payload.dat
+pm_config.json
+AuditList.json
+*-preview.png
