@@ -8,3 +8,4 @@ payload.dat
 pm_config.json
 AuditList.json
 *-preview.png
+!/GUI/ProfileMigrator_GUI.exe

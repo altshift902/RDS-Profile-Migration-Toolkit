@@ -1,6 +1,8 @@
-# RDS Profile Migration Toolkit
+﻿# RDS Profile Migration Toolkit
 
 Графическая утилита для администратора RDS. Работает на целевом сервере Windows и переносит выбранные папки профилей пользователей одного домена с исходного сервера по SMB.
+
+[Скачать готовый EXE](https://github.com/altshift902/RDS-Profile-Migration-Toolkit/raw/refs/heads/main/GUI/ProfileMigrator_GUI.exe)
 
 ## Сборка и запуск
 
