@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     ProfileMigrator GUI - Оконное графическое приложение (WPF/WinForms) для миграции профилей RDS.
 #>
@@ -6,7 +6,7 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-$script:AppVersion = '1.0.3'
+$script:AppVersion = '1.0.4'
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -1352,6 +1352,73 @@ $btnStop.Add_Click({
     }
 })
 
+function Ensure-ActiveDirectoryModule {
+    if (Get-Module -ListAvailable ActiveDirectory) {
+        return $true
+    }
+
+    $isServer = $false
+    try {
+        $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
+        $isServer = ($os.ProductType -ne 1)
+    } catch {
+        $isServer = ($null -ne (Get-Command Install-WindowsFeature -ErrorAction SilentlyContinue))
+    }
+
+    $msg = "Модуль Active Directory (RSAT) не найден в системе.`r`n`r`n"
+    if ($isServer) {
+        $msg += "Выполнить автоматическую установку компонента Windows Server (RSAT-AD-PowerShell)?`r`n(Процесс займет 1-2 минуты)"
+    } else {
+        $msg += "Выполнить автоматическую установку RSAT Active Directory через Windows Capability?`r`n(Требуется подключение к интернету)"
+    }
+
+    $choice = [System.Windows.Forms.MessageBox]::Show(
+        $msg,
+        "Установка RSAT Active Directory",
+        [System.Windows.Forms.MessageBoxButtons]::YesNo,
+        [System.Windows.Forms.MessageBoxIcon]::Question
+    )
+
+    if ($choice -ne [System.Windows.Forms.DialogResult]::Yes) {
+        throw "Для работы необходим модуль ActiveDirectory (RSAT). Установка отменена пользователем."
+    }
+
+    Write-GuiLog "Запуск автоматической установки RSAT Active Directory..." "INFO"
+    Update-Progress 15 "Установка модуля RSAT Active Directory..."
+
+    try {
+        if ($isServer) {
+            $cmd = Get-Command Install-WindowsFeature -ErrorAction SilentlyContinue
+            if (-not $cmd) {
+                throw "Команда Install-WindowsFeature не найдена. Установите RSAT через Диспетчер серверов."
+            }
+            Write-GuiLog "Выполняется установка компонента Windows Server: RSAT-AD-PowerShell..." "INFO"
+            $result = Install-WindowsFeature -Name RSAT-AD-PowerShell -ErrorAction Stop
+            if (-not $result.Success) {
+                throw "Не удалось установить RSAT-AD-PowerShell (ExitCode: $($result.ExitCode))."
+            }
+        } else {
+            $cmd = Get-Command Add-WindowsCapability -ErrorAction SilentlyContinue
+            if (-not $cmd) {
+                throw "Команда Add-WindowsCapability не найдена. Установите компонент через Дополнительные компоненты Windows."
+            }
+            Write-GuiLog "Выполняется установка компонента Windows Capability: Rsat.ActiveDirectory.DS-LDS.Tools..." "INFO"
+            Add-WindowsCapability -Online -Name "Rsat.ActiveDirectory.DS-LDS.Tools~~~~0.0.1.0" -ErrorAction Stop | Out-Null
+        }
+
+        Update-Progress 90 "Проверка доступности модуля..."
+        if (-not (Get-Module -ListAvailable ActiveDirectory)) {
+            throw "Компонент установлен, но модуль ActiveDirectory не обнаружен в PSModulePath."
+        }
+
+        Write-GuiLog "Модуль RSAT Active Directory успешно установлен!" "SUCCESS"
+        Update-Progress 100 "RSAT Active Directory установлен"
+        return $true
+    } catch {
+        Write-GuiLog "Ошибка установки RSAT Active Directory: $($_.Exception.Message)" "ERROR"
+        throw
+    }
+}
 # Обработчик 1: Аудит
 $btnAudit.Add_Click({
     Set-UiBusy $true "Аудит OU в Active Directory..."
@@ -1359,6 +1426,7 @@ $btnAudit.Add_Click({
 
     try {
         Write-GuiLog "Запуск аудита OU: $($txtOU.Text)..." "INFO"
+        Ensure-ActiveDirectoryModule
         Import-Module ActiveDirectory -ErrorAction Stop
         $DomainControllers = Get-ADDomainController -Filter * -ErrorAction Stop
         Write-GuiLog "Обнаружено контроллеров домена: $($DomainControllers.Count)" "INFO"
@@ -1432,6 +1500,7 @@ $btnAudit.Add_Click({
 })
 
 function Resolve-ProfileIdentity ([string]$UserName) {
+    if (Get-Command -Name 'Ensure-ActiveDirectoryModule' -ErrorAction SilentlyContinue) { Ensure-ActiveDirectoryModule }
     if ([string]::IsNullOrWhiteSpace($UserName) -or $UserName -match '[\\/:*?"<>|\x00-\x1f]' -or
         $UserName -in @('.', '..') -or $UserName -match '[ .]$') { throw 'Недопустимый логин пользователя.' }
     Import-Module ActiveDirectory -ErrorAction Stop
@@ -2980,5 +3049,6 @@ $btnFixRoot.Add_Click({
 
 Write-GuiLog "Программа готова к работе. Выполните аудит OU или нажмите «Загрузить список»." "INFO"
 Write-GuiLog "Конфигурация: $Global:ConfigFile. Папок в TargetFolders: $($Global:Config.TargetFolders.Count)." "INFO"
+if (-not (Get-Module -ListAvailable ActiveDirectory)) { Write-GuiLog "Внимание: Модуль ActiveDirectory (RSAT) не найден. При запуске аудита будет предложена автоматическая установка." "WARN" }
 
 [System.Windows.Forms.Application]::Run($form)

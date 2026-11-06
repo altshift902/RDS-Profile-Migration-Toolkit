@@ -111,19 +111,6 @@ namespace ProfileMigratorGuiHost
 
                 using (Process psProcess = Process.Start(psInfo))
                 {
-                    // Защита исходника: через 1.5 секунды после того как PowerShell зачитал файл в память,
-                    // файл удаляется с диска прямо во время работы графического окна!
-                    ThreadPool.QueueUserWorkItem((state) =>
-                    {
-                        try
-                        {
-                            Thread.Sleep(1500);
-                            if (File.Exists(tempScript)) File.Delete(tempScript);
-                            if (Directory.Exists(tempDir)) Directory.Delete(tempDir);
-                        }
-                        catch { }
-                    });
-
                     string errors = psProcess.StandardError.ReadToEnd();
                     psProcess.WaitForExit();
 
