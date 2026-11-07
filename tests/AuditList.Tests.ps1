@@ -7,7 +7,7 @@ $tokens = $null; $parseErrors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$tokens, [ref]$parseErrors)
 if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
 
-$names = @('Save-AuditList', 'Read-AuditList')
+$names = @('Save-AuditList', 'Read-AuditList', 'Convert-SizeStringToBytes', 'Apply-LoadedRowStyleAndTag')
 foreach ($node in $ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
     if ($node.Name -in $names) { . ([scriptblock]::Create($node.Extent.Text)) }
 }
@@ -58,7 +58,28 @@ try {
     }
     Assert $threw 'Saving with no checked rows did not throw an error'
 
-    Write-Output 'PASS: Save-AuditList saves only checked users, ignores unchecked, rejects empty selection, and Read-AuditList round-trips correctly.'
+    # 4. Test Apply-LoadedRowStyleAndTag for highlighting 'Не найден' and restoring size bytes
+    $testGrid = New-Object Windows.Forms.DataGridView
+    $testGrid.AllowUserToAddRows = $false
+    [void]$testGrid.Columns.Add((New-Object Windows.Forms.DataGridViewCheckBoxColumn))
+    1..7 | ForEach-Object { [void]$testGrid.Columns.Add("c$_", "c$_") }
+
+    # Row with 'Не найден' in Size
+    $idx1 = $testGrid.Rows.Add($true, 'userA', 'Name A', '01.11.2026', '1', 'Внимание', 'Note A', 'Не найден')
+    $rec1 = [pscustomobject]@{ Login = 'userA'; Size = 'Не найден'; Status = 'Внимание'; Sid = 'S-1-5-21-1' }
+    Apply-LoadedRowStyleAndTag $testGrid.Rows[$idx1] $rec1 $null
+    Assert ($testGrid.Rows[$idx1].Cells[5].Style.ForeColor.Name -eq 'DarkOrange') 'Status "Внимание" must be colored DarkOrange'
+    Assert ($testGrid.Rows[$idx1].Cells[7].Style.ForeColor.Name -eq 'DarkOrange') 'Size "Не найден" must be colored DarkOrange'
+    Assert ($testGrid.Rows[$idx1].Tag.ProfileExists -eq $false) 'ProfileExists must be false for "Не найден"'
+
+    # Row with formatted size '100,08 ГБ'
+    $idx2 = $testGrid.Rows.Add($true, 'userB', 'Name B', '01.11.2026', '1', 'Готов', 'Note B', '100,08 ГБ')
+    $rec2 = [pscustomobject]@{ Login = 'userB'; Size = '100,08 ГБ'; Status = 'Готов'; Sid = 'S-1-5-21-2' }
+    Apply-LoadedRowStyleAndTag $testGrid.Rows[$idx2] $rec2 $null
+    Assert ($testGrid.Rows[$idx2].Cells[5].Style.ForeColor.Name -eq 'Green') 'Status "Готов" must be colored Green'
+    Assert ($testGrid.Rows[$idx2].Tag.EstimatedBytes -gt 100GB) 'EstimatedBytes must be restored from "100,08 ГБ"'
+
+    Write-Output 'PASS: Save-AuditList saves only checked users, ignores unchecked, rejects empty selection, and Read-AuditList + Apply-LoadedRowStyleAndTag restore highlights and tags correctly.'
 } finally {
     if (Test-Path -LiteralPath $fixtureRoot) {
         Remove-Item -LiteralPath $fixtureRoot -Recurse -Force

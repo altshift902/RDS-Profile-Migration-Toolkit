@@ -617,6 +617,63 @@ function Get-DriveFreeSpace ([string]$Path) {
     return $null
 }
 
+function Convert-SizeStringToBytes ([string]$Text) {
+    if ([string]::IsNullOrWhiteSpace($Text) -or $Text -in @('—', 'Не найден') -or $Text -match 'Ошибка') {
+        return [int64]-1
+    }
+    $trimmed = $Text.Trim().Replace(',', '.')
+    if ($trimmed -match '^([0-9.]+)\s*ТБ$') { return [int64]([double]$matches[1] * 1TB) }
+    if ($trimmed -match '^([0-9.]+)\s*ГБ$') { return [int64]([double]$matches[1] * 1GB) }
+    if ($trimmed -match '^([0-9.]+)\s*МБ$') { return [int64]([double]$matches[1] * 1MB) }
+    if ($trimmed -match '^([0-9.]+)\s*КБ$') { return [int64]([double]$matches[1] * 1KB) }
+    if ($trimmed -match '^([0-9.]+)\s*Б$') { return [int64]([double]$matches[1]) }
+    return [int64]-1
+}
+
+function Apply-LoadedRowStyleAndTag ($Row, $Record, $Inspect) {
+    $sizeVal = if ($Record.PSObject.Properties['Size'] -and -not [string]::IsNullOrWhiteSpace($Record.Size)) { [string]$Record.Size } else { '—' }
+    $sidVal = if ($Record.PSObject.Properties['Sid'] -and $Record.Sid) { [string]$Record.Sid } else { $null }
+
+    $bytes = if ($Record.PSObject.Properties['EstimatedBytes'] -and $Record.EstimatedBytes -ne $null -and [int64]$Record.EstimatedBytes -ge 0) {
+        [int64]$Record.EstimatedBytes
+    } else {
+        Convert-SizeStringToBytes $sizeVal
+    }
+    $files = if ($Record.PSObject.Properties['EstimatedFiles'] -and $Record.EstimatedFiles -ne $null -and [int64]$Record.EstimatedFiles -gt 0) { [int64]$Record.EstimatedFiles } else { [int64]0 }
+    $details = if ($Record.PSObject.Properties['Details'] -and $Record.Details) { $Record.Details } else { @{} }
+
+    $Row.Tag = [pscustomobject]@{
+        EstimatedBytes = $bytes
+        EstimatedFiles = $files
+        ProfileExists = ($sizeVal -ne 'Не найден')
+        Details = $details
+        Sid = $sidVal
+    }
+
+    # Подсветка статуса готовности (Колонка 5)
+    $statusVal = [string]$Row.Cells[5].Value
+    if ($Inspect -and $Inspect.IsMigrated -and $Inspect.ForeColor) {
+        $Row.Cells[5].Style.ForeColor = $Inspect.ForeColor
+    } elseif ($statusVal -in @('Готов', 'Скопирован')) {
+        $Row.Cells[5].Style.ForeColor = [Drawing.Color]::Green
+    } elseif ($statusVal -in @('Внимание', 'Требует внимания', 'Прервано')) {
+        $Row.Cells[5].Style.ForeColor = [Drawing.Color]::DarkOrange
+    } elseif ($statusVal -eq 'Ошибка') {
+        $Row.Cells[5].Style.ForeColor = [Drawing.Color]::Red
+    }
+
+    # Подсветка размера данных (Колонка 7)
+    if ($sizeVal -eq 'Не найден') {
+        $Row.Cells[7].Style.ForeColor = [Drawing.Color]::DarkOrange
+        $Row.Cells[7].ToolTipText = "Профиль $($Record.Login) не найден на сервере-источнике"
+    } elseif ($sizeVal -match 'Ошибка') {
+        $Row.Cells[7].Style.ForeColor = [Drawing.Color]::Red
+    } elseif ($bytes -ge 0) {
+        $filesMsg = if ($files -gt 0) { " ($files файлов)" } else { "" }
+        $Row.Cells[7].ToolTipText = "Оценочный объем: $sizeVal$filesMsg"
+    }
+}
+
 function Save-AuditList ($Grid, $Context, [string]$Path) {
     if (-not $Context -or -not $Grid.Rows.Count) { throw 'Нет списка для сохранения.' }
     [void]$Grid.EndEdit()
@@ -629,6 +686,9 @@ function Save-AuditList ($Grid, $Context, [string]$Path) {
         } elseif ($row.Tag -and $row.Tag.PSObject.Properties['Profile'] -and $row.Tag.Profile.Sid) {
             [string]$row.Tag.Profile.Sid
         } else { $null }
+        $bytesVal = if ($row.Tag -and $row.Tag.PSObject.Properties['EstimatedBytes']) { [int64]$row.Tag.EstimatedBytes } else { -1 }
+        $filesVal = if ($row.Tag -and $row.Tag.PSObject.Properties['EstimatedFiles']) { [int64]$row.Tag.EstimatedFiles } else { 0 }
+        $detailsVal = if ($row.Tag -and $row.Tag.PSObject.Properties['Details'] -and $row.Tag.Details) { $row.Tag.Details } else { $null }
         [ordered]@{
             Selected = [bool]$row.Cells[0].Value
             Login = [string]$row.Cells[1].Value
@@ -638,6 +698,9 @@ function Save-AuditList ($Grid, $Context, [string]$Path) {
             Status = [string]$row.Cells[5].Value
             Notes = [string]$row.Cells[6].Value
             Size = $sizeVal
+            EstimatedBytes = $bytesVal
+            EstimatedFiles = $filesVal
+            Details = $detailsVal
             Sid = $sidVal
             Inactive = $row.DefaultCellStyle.ForeColor -eq [Drawing.Color]::Gray
         }
@@ -671,6 +734,9 @@ function Read-AuditList ([string]$Path, [string]$Server, [string]$OU) {
         }
         if ($r.PSObject.Properties['Sid'] -and $r.Sid -ne $null -and $r.Sid -isnot [string]) {
             throw "Некорректное поле списка: Sid"
+        }
+        if ($r.PSObject.Properties['EstimatedBytes'] -and $r.EstimatedBytes -ne $null -and ($r.EstimatedBytes -isnot [int] -and $r.EstimatedBytes -isnot [int64] -and $r.EstimatedBytes -isnot [double] -and $r.EstimatedBytes -isnot [long])) {
+            throw "Некорректное поле списка: EstimatedBytes"
         }
         if ($r.Status -eq 'Готов') { $r.Status = 'Готов' }
         elseif ($r.Status -in @('Внимание','Требует внимания')) { $r.Status = 'Внимание' }
@@ -708,18 +774,11 @@ $btnLoadList.Add_Click({
             if ($inspect.IsMigrated) {
                 $migratedCount++
                 if ($inspect.Status -eq 'Готов') { $readyCount++ }
-                if ($inspect.ForeColor) {
-                    $gridUsers.Rows[$i].Cells[5].Style.ForeColor = $inspect.ForeColor
-                }
-            } elseif ($statusVal -eq 'Готов') {
-                $gridUsers.Rows[$i].Cells[5].Style.ForeColor = [Drawing.Color]::Green
-            } elseif ($statusVal -in @('Внимание','Требует внимания')) {
-                $gridUsers.Rows[$i].Cells[5].Style.ForeColor = [Drawing.Color]::DarkOrange
             }
             $gridUsers.Rows[$i].Cells[6].ToolTipText = $notesVal
-            if ($sidVal) {
-                $gridUsers.Rows[$i].Tag = @{ Sid = $sidVal }
-            }
+
+            # Применение стилей подсветки статуса/размера и тега
+            Apply-LoadedRowStyleAndTag $gridUsers.Rows[$i] $r $inspect
         }
         $script:auditListContext = @{ Server=$data.Server; OU=$data.OU; AuditTime=$data.AuditTime }
         Update-CountersAndFilter
@@ -3580,18 +3639,11 @@ if (Test-Path -LiteralPath $startupAuditPath) {
                 if ($inspect.IsMigrated) {
                     $migratedTotal++
                     if ($inspect.Status -eq 'Готов') { $readyTotal++ }
-                    if ($inspect.ForeColor) {
-                        $gridUsers.Rows[$rowIdx].Cells[5].Style.ForeColor = $inspect.ForeColor
-                    }
-                } elseif ($statusVal -eq 'Готов') {
-                    $gridUsers.Rows[$rowIdx].Cells[5].Style.ForeColor = [Drawing.Color]::Green
-                } elseif ($statusVal -in @('Внимание','Требует внимания')) {
-                    $gridUsers.Rows[$rowIdx].Cells[5].Style.ForeColor = [Drawing.Color]::DarkOrange
                 }
                 $gridUsers.Rows[$rowIdx].Cells[6].ToolTipText = $notesVal
-                if ($sidVal) {
-                    $gridUsers.Rows[$rowIdx].Tag = @{ Sid = $sidVal }
-                }
+
+                # Применение стилей подсветки статуса/размера и тега
+                Apply-LoadedRowStyleAndTag $gridUsers.Rows[$rowIdx] $r $inspect
             }
             $script:auditListContext = @{ Server=$savedData.Server; OU=$savedData.OU; AuditTime=$savedData.AuditTime }
             Update-CountersAndFilter
