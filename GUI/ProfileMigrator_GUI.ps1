@@ -450,7 +450,7 @@ $pnlHeader.Add_Resize($UpdateLayoutFunc)
 # Центральная панель с таблицей пользователей
 $pnlData = New-Object System.Windows.Forms.Panel
 $pnlData.Location = New-Object System.Drawing.Point(15, 175)
-$pnlData.Size = New-Object System.Drawing.Size(995, 184)
+$pnlData.Size = New-Object System.Drawing.Size(995, 160)
 $pnlData.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
 $form.Controls.Add($pnlData)
 
@@ -532,10 +532,10 @@ $gridUsers.Add_CellDoubleClick({
     }
 })
 
-# Кнопки быстрых действий над списком
+# Кнопки быстрых действий над списком и сводка
 $pnlGridTools = New-Object System.Windows.Forms.Panel
-$pnlGridTools.Location = New-Object System.Drawing.Point(15, 371)
-$pnlGridTools.Size = New-Object System.Drawing.Size(995, 30)
+$pnlGridTools.Location = New-Object System.Drawing.Point(15, 345)
+$pnlGridTools.Size = New-Object System.Drawing.Size(995, 58)
 $pnlGridTools.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
 $form.Controls.Add($pnlGridTools)
 
@@ -574,13 +574,13 @@ $txtSearch.Size = New-Object System.Drawing.Size(130, 23)
 $txtSearch.Location = New-Object System.Drawing.Point(405, 4)
 $pnlGridTools.Controls.Add($txtSearch)
 
-# Счетчик пользователей и выбранных
+# Счетчик пользователей и выбранных (2-я строка панели инструментов списка)
 $lblCounter = New-Object System.Windows.Forms.Label
 $lblCounter.Text = "Всего: 0 | Выбрано: 0"
 $lblCounter.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
 $lblCounter.ForeColor = [System.Drawing.Color]::FromArgb(24, 43, 73)
 $lblCounter.AutoSize = $true
-$lblCounter.Location = New-Object System.Drawing.Point(555, 7)
+$lblCounter.Location = New-Object System.Drawing.Point(2, 35)
 $pnlGridTools.Controls.Add($lblCounter)
 
 $btnSaveList = New-Object Windows.Forms.Button
