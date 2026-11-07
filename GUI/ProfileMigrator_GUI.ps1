@@ -6,7 +6,7 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-$script:AppVersion = '1.1.0'
+$script:AppVersion = '1.2.0-dev.1'
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -456,6 +456,39 @@ $colNotes.HeaderText = "Примечание / Базы 1C"
 $colNotes.AutoSizeMode = "Fill"
 $gridUsers.Columns.Add($colNotes) | Out-Null
 
+$colSize = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
+$colSize.HeaderText = "Размер"
+$colSize.Width = 95
+$gridUsers.Columns.Add($colSize) | Out-Null
+$colSize.DisplayIndex = 6
+
+$gridUsers.Add_SortCompare({
+    param($s, $e)
+    if ($e.Column.Index -eq 7) {
+        $v1 = if ($s.Rows[$e.RowIndex1].Tag -and $s.Rows[$e.RowIndex1].Tag.PSObject.Properties['EstimatedBytes']) { [int64]$s.Rows[$e.RowIndex1].Tag.EstimatedBytes } else { [int64]-1 }
+        $v2 = if ($s.Rows[$e.RowIndex2].Tag -and $s.Rows[$e.RowIndex2].Tag.PSObject.Properties['EstimatedBytes']) { [int64]$s.Rows[$e.RowIndex2].Tag.EstimatedBytes } else { [int64]-1 }
+        $e.SortResult = $v1.CompareTo($v2)
+        $e.Handled = $true
+    }
+})
+
+$gridUsers.Add_CellDoubleClick({
+    param($s, $e)
+    if ($e.RowIndex -ge 0 -and $e.ColumnIndex -eq 7) {
+        $row = $s.Rows[$e.RowIndex]
+        if ($row.Tag -and $row.Tag.PSObject.Properties['Details'] -and $row.Tag.Details.Count -gt 0) {
+            $user = $row.Cells[1].Value
+            $lines = @("Детализация папок пользователя [$user]:`r`n")
+            foreach ($key in $row.Tag.Details.Keys) {
+                $d = $row.Tag.Details[$key]
+                $lines += "• $($key): $(Format-ByteSize $d.Bytes) ($($d.Files) файлов)"
+            }
+            $lines += "`r`nВсего: $(Format-ByteSize $row.Tag.EstimatedBytes) ($($row.Tag.EstimatedFiles) файлов)"
+            [System.Windows.Forms.MessageBox]::Show($form, ($lines -join "`r`n"), "Детализация объема: $user", "OK", "Information")
+        }
+    }
+})
+
 # Кнопки быстрых действий над списком
 $pnlGridTools = New-Object System.Windows.Forms.Panel
 $pnlGridTools.Location = New-Object System.Drawing.Point(15, 371)
@@ -521,12 +554,33 @@ $btnLoadList.Anchor = 'Top,Right'
 Set-MainButtonStyle $btnLoadList
 $pnlGridTools.Controls.Add($btnLoadList)
 
+function Format-ByteSize ([int64]$Bytes) {
+    if ($Bytes -lt 0) { return "—" }
+    if ($Bytes -ge 1TB) { return ("{0:N2} ТБ" -f ($Bytes / 1TB)) }
+    if ($Bytes -ge 1GB) { return ("{0:N2} ГБ" -f ($Bytes / 1GB)) }
+    if ($Bytes -ge 1MB) { return ("{0:N1} МБ" -f ($Bytes / 1MB)) }
+    if ($Bytes -ge 1KB) { return ("{0:N0} КБ" -f ($Bytes / 1KB)) }
+    return "$Bytes Б"
+}
+
+function Get-DriveFreeSpace ([string]$Path) {
+    try {
+        if ([string]::IsNullOrWhiteSpace($Path)) { return $null }
+        $root = [System.IO.Path]::GetPathRoot($Path)
+        if ([string]::IsNullOrWhiteSpace($root)) { return $null }
+        $drive = [System.IO.DriveInfo]::new($root)
+        if ($drive.IsReady) { return [int64]$drive.AvailableFreeSpace }
+    } catch {}
+    return $null
+}
+
 function Save-AuditList ($Grid, $Context, [string]$Path) {
     if (-not $Context -or -not $Grid.Rows.Count) { throw 'Нет списка для сохранения.' }
     [void]$Grid.EndEdit()
     $selectedRows = @(foreach ($row in $Grid.Rows) { if ([bool]$row.Cells[0].Value) { $row } })
     if ($selectedRows.Count -eq 0) { throw 'Нет отмеченных пользователей для сохранения. Отметьте нужные учетные записи галочками.' }
     $rows = @(foreach ($row in $selectedRows) {
+        $sizeVal = if ($row.Cells.Count -gt 7 -and $row.Cells[7].Value) { [string]$row.Cells[7].Value } else { '—' }
         [ordered]@{
             Selected = [bool]$row.Cells[0].Value
             Login = [string]$row.Cells[1].Value
@@ -535,6 +589,7 @@ function Save-AuditList ($Grid, $Context, [string]$Path) {
             Days = [string]$row.Cells[4].Value
             Status = [string]$row.Cells[5].Value
             Notes = [string]$row.Cells[6].Value
+            Size = $sizeVal
             Inactive = $row.DefaultCellStyle.ForeColor -eq [Drawing.Color]::Gray
         }
     })
@@ -562,6 +617,9 @@ function Read-AuditList ([string]$Path, [string]$Server, [string]$OU) {
         foreach ($field in @('Name','LastLogon','Days','Status','Notes')) {
             if ($r.$field -isnot [string]) { throw "Некорректное поле списка: $field" }
         }
+        if ($r.PSObject.Properties['Size'] -and $r.Size -isnot [string]) {
+            throw "Некорректное поле списка: Size"
+        }
         if ($r.Status -eq 'Готов') { $r.Status = 'Готов' }
         elseif ($r.Status -in @('Внимание','Требует внимания')) { $r.Status = 'Внимание' }
         $seen[$r.Login] = $true
@@ -585,7 +643,8 @@ $btnLoadList.Add_Click({
         if ($gridUsers.Rows.Count -and [Windows.Forms.MessageBox]::Show($form,'Заменить текущую таблицу и галочки сохраненным списком?','Загрузить список','YesNo','Question') -ne 'Yes') { return }
         $gridUsers.Rows.Clear()
         foreach ($r in $data.Rows) {
-            $i = $gridUsers.Rows.Add($r.Selected,$r.Login,$r.Name,$r.LastLogon,$r.Days,$r.Status,$r.Notes)
+            $sizeVal = if ($r.PSObject.Properties['Size'] -and -not [string]::IsNullOrWhiteSpace($r.Size)) { [string]$r.Size } else { '—' }
+            $i = $gridUsers.Rows.Add($r.Selected,$r.Login,$r.Name,$r.LastLogon,$r.Days,$r.Status,$r.Notes,$sizeVal)
             if ($r.Inactive) { $gridUsers.Rows[$i].DefaultCellStyle.ForeColor = [Drawing.Color]::Gray }
         }
         $script:auditListContext = @{ Server=$data.Server; OU=$data.OU; AuditTime=$data.AuditTime }
@@ -598,12 +657,20 @@ $btnLoadList.Add_Click({
 function Update-CountersAndFilter {
     $total = $gridUsers.Rows.Count
     $selectedCount = 0
+    $selectedBytes = [int64]0
+    $measuredCount = 0
     $filterText = $txtSearch.Text.Trim().ToLower()
     $onlyChecked = $chkOnlySelected.Checked
 
     foreach ($row in $gridUsers.Rows) {
         $isChecked = [bool]$row.Cells[0].Value
-        if ($isChecked) { $selectedCount++ }
+        if ($isChecked) {
+            $selectedCount++
+            if ($row.Tag -and $row.Tag.PSObject.Properties['EstimatedBytes'] -and $row.Tag.EstimatedBytes -ge 0) {
+                $selectedBytes += [int64]$row.Tag.EstimatedBytes
+                $measuredCount++
+            }
+        }
 
         $login = "$($row.Cells[1].Value)".ToLower()
         $fio = "$($row.Cells[2].Value)".ToLower()
@@ -614,7 +681,21 @@ function Update-CountersAndFilter {
         $row.Visible = ($matchesSearch -and $matchesCheck)
     }
 
-    $lblCounter.Text = "Всего: $total | Выбрано: $selectedCount"
+    $targetRoot = [System.IO.Path]::GetPathRoot($Global:Config.ProfilesRoot)
+    $freeBytes = Get-DriveFreeSpace $targetRoot
+
+    $sizeText = ""
+    if ($measuredCount -gt 0) {
+        $sizeText = " | Объем: $(Format-ByteSize $selectedBytes)"
+    }
+
+    if ($measuredCount -gt 0 -and $freeBytes -ne $null -and $selectedBytes -gt $freeBytes) {
+        $lblCounter.ForeColor = [System.Drawing.Color]::DarkRed
+        $lblCounter.Text = "Всего: $total | Выбрано: $selectedCount$sizeText [МЕСТА МАЛО: $(Format-ByteSize $freeBytes)]"
+    } else {
+        $lblCounter.ForeColor = [System.Drawing.Color]::FromArgb(24, 43, 73)
+        $lblCounter.Text = "Всего: $total | Выбрано: $selectedCount$sizeText"
+    }
 }
 
 # Панель основных кнопок действий (FlowLayoutPanel: по возможности в один ряд, если не помещаются — на второй с выравниванием влево)
@@ -672,6 +753,7 @@ function Create-ActionButton ($Title, $BgColor, $TipText) {
 $stepReadyColor = [System.Drawing.Color]::FromArgb(41, 128, 185)
 $stepBusyColor = [System.Drawing.Color]::FromArgb(206, 222, 234)
 $btnAudit = Create-ActionButton "1. Аудит OU (Поиск)" $stepReadyColor "Шаг 1: Поиск пользователей в OU; lastLogon по ответившим DC. Отмечает включенные учетные записи в пределах лимита."
+$btnEstimate = Create-ActionButton "Оценка объема" $stepReadyColor "Оценка объема переносимых данных для отмеченных пользователей по сети (без копирования). Проверяет свободное место на целевом диске."
 $btnSync = Create-ActionButton "2. Миграция выбранных" $stepReadyColor "Шаг 2: Для отмеченных пользователей готовит профиль, копирует TargetFolders и настройки запуска 1С, применяет ACL."
 $btnDelta = Create-ActionButton "3. Докачка дельты (/XO)" $stepReadyColor "Шаг 3: Повторное копирование для отмеченных пользователей; /XO пропускает файлы источника старее целевых."
 $btnValidate = Create-ActionButton "4. Валидация профилей" $stepReadyColor "Шаг 4: Проверка отмеченных профилей: SID, путь, NTUSER.DAT, TargetFolders, состояние загрузки и базовые ACL."
@@ -679,7 +761,7 @@ $btnShortcuts = Create-ActionButton "5. Проверка ярлыков" $stepRe
 $btnStop = Create-ActionButton "Остановить процесс" ([System.Drawing.Color]::FromArgb(160, 170, 180)) "Запрашивает остановку операции и завершает запущенный ею Robocopy или icacls. Уже выполненные изменения сохраняются."
 $btnStop.Enabled = $false
 
-$actionButtons = @($btnAudit, $btnSync, $btnDelta, $btnValidate, $btnShortcuts, $btnStop)
+$actionButtons = @($btnAudit, $btnEstimate, $btnSync, $btnDelta, $btnValidate, $btnShortcuts, $btnStop)
 $maxActionTextWidth = 0
 foreach ($b in $actionButtons) {
     $sz = [System.Windows.Forms.TextRenderer]::MeasureText($b.Text, $b.Font)
@@ -959,6 +1041,7 @@ $btnHelp.Add_Click({
     # Вкладка 1: Кнопки действий (Шаги 1-7)
     $actionsHelp = @(
         "1. Аудит OU (Поиск)|• Ищет учетные записи в указанном SearchBase и его вложенных подразделениях AD.`r`n• Запрашивает lastLogon у найденных контроллеров домена и берет наибольшее полученное значение. При недоступности DC результат может быть неполным.`r`n• Отмечает включенные учетные записи, у которых число дней после входа не превышает лимит. Если дата не получена, отображает «Никогда» и не ставит галочку.`r`n• Результат выводится в таблицу. CSV-отчет и ActiveUsersList.txt эта версия не создает.",
+        "Оценка объема|• Сканирует папки TargetFolders и настройки 1С на сервере-источнике для отмеченных пользователей в режиме dry-run (Robocopy /L) без копирования данных.`r`n• Определяет суммарный объем данных и число файлов, отображая результат в столбце «Размер». Двойной клик на ячейке открывает детализацию по каждой папке.`r`n• Клик по заголовку столбца «Размер» выполняет численную сортировку таблицы, позволяя мгновенно выявить самые тяжелые профили.`r`n• Проверяет доступное место на целевом диске (обычно C:\) и предупреждает при риске переполнения диска (Disk Full).`r`n• В строке счетчиков отображает суммарный объем выбранных пользователей в реальном времени.",
         "2. Миграция выбранных|• После подтверждения обрабатывает только отмеченных пользователей по SID из AD. Зарегистрированный профиль использует по пути из ProfileList.`r`n• Если записи SID нет, но папка логина в системном каталоге профилей уже есть, регистрирует эту же папку без переименования и дубликатов. Подготовка добавляет только отсутствующие файлы из локального Default, сохраняет имеющиеся файлы и NTUSER.DAT, настраивает ACL.`r`n• Если нет ни записи, ни папки, создает профиль средствами Windows. Пользователь не должен входить на целевой сервер во время миграции.`r`n• Копирует папки TargetFolders с подпапками, включая пустые. По умолчанию: Desktop, Documents, Downloads, Outlook, Crypto Pro, Google, YandexBrowser. Переходы junction исключаются (/XJ).`r`n• Отдельно копирует ibases.v8i и 1CEStart.cfg из AppData\Roaming\1C\1CEStart, если они есть. Это настройки запуска, а не сами базы 1С.`r`n• Переносит данные, атрибуты и время файлов; затем применяет ACL на целевом профиле. При ошибках часть данных уже может быть скопирована.`r`n• Отличающиеся файлы назначения могут быть перезаписаны при последующем копировании с источника. Лишние файлы на цели и данные источника не удаляются.`r`n• При включении опции Outlook шаг 2 сохраняет существующие PST и извлекает почтовые настройки из временной копии исходного NTUSER.DAT. Загруженные, конфликтующие и некорректные целевые профили не обрабатываются.",
         "3. Докачка дельты (/XO)|• Выполняет тот же перенос для отмеченных пользователей, добавляя /XO: пропускает файлы источника, которые старее соответствующих файлов на цели.`r`n• Robocopy сравнивает текущее состояние файлов; дата первой миграции не хранится. Новые и отличающиеся файлы копируются с учетом /XO.`r`n• При отсутствии профиля и папки создает профиль Windows, затем применяет ACL. Если папка уже есть, но SID не зарегистрирован, требуется сначала шаг 2; дубликат папки не создается.`r`n• NTUSER.DAT сохраняется; лишние файлы на цели не удаляются. Пользователь не должен входить на целевой сервер во время копирования.`r`n• Время выполнения зависит от объема данных, сети и дисков. После докачки повторите валидацию.",
         "4. Изоляция прав ACL|• Работает с отмеченными, зарегистрированными и незагруженными профилями. Эта же настройка вызывается при миграции и докачке.`r`n• На корне профиля отключает наследование с сохранением унаследованных записей как явных (/inheritance:d).`r`n• Удаляет записи Everyone, Authenticated Users и Users в дереве профиля. Владельцем корня назначает пользователя по SID.`r`n• Выдает FullControl пользователю, SYSTEM и Administrators на корень, NTUSER.DAT и рекурсивно на существующие папки TargetFolders и настроек 1С.`r`n• Остальные явные разрешения не очищаются. Операция не является полной проверкой всех возможных доступов к профилю.",
@@ -1299,6 +1382,104 @@ function Invoke-CliCommand ($ExePath, [string[]]$ArgsList) {
     return -1
 }
 
+function Measure-FolderDataSize ($FolderPath) {
+    if ($Global:CancelRequested) { return @{ Bytes = [int64]0; Files = [int64]0; Cancelled = $true } }
+    if (-not (Test-Path -LiteralPath $FolderPath -PathType Container)) {
+        return @{ Bytes = [int64]0; Files = [int64]0; Cancelled = $false }
+    }
+    $dummy = Join-Path $env:TEMP ('PM_DryRun_' + [guid]::NewGuid().ToString('N'))
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = "robocopy.exe"
+    $psi.Arguments = "`"$FolderPath`" `"$dummy`" /L /E /BYTES /NJH /NFL /NDL /XJ /R:0 /W:0 /MT:16"
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.CreateNoWindow = $true
+    try {
+        $psi.StandardOutputEncoding = [System.Text.Encoding]::GetEncoding([System.Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage)
+    } catch {}
+
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $Global:CurrentProc = $proc
+
+    while (-not $proc.WaitForExit(100)) {
+        [System.Windows.Forms.Application]::DoEvents()
+        if ($Global:CancelRequested) {
+            try { if (-not $proc.HasExited) { $proc.Kill() } } catch {}
+            break
+        }
+    }
+    $out = $proc.StandardOutput.ReadToEnd()
+    $proc.Dispose()
+    $Global:CurrentProc = $null
+
+    if ($Global:CancelRequested) {
+        return @{ Bytes = [int64]0; Files = [int64]0; Cancelled = $true }
+    }
+
+    $bytes = [int64]0
+    $files = [int64]0
+    $statLines = @()
+    foreach ($line in ($out -split "\r?\n")) {
+        if ($line -match '^\s*(?:Files|Файлов)\s*:\s*(\d+)') { $files = [int64]$matches[1] }
+        elseif ($line -match '^\s*(?:Bytes|Байт)\s*:\s*(\d+)') { $bytes = [int64]$matches[1] }
+        elseif ($line -match '^\s*[\p{L}\s]+\s*:\s*(\d+)') { $statLines += [int64]$matches[1] }
+    }
+    if ($bytes -eq 0 -and $statLines.Count -ge 3) {
+        if ($files -eq 0) { $files = $statLines[1] }
+        $bytes = $statLines[2]
+    }
+    return @{ Bytes = $bytes; Files = $files; Cancelled = $false }
+}
+
+function Get-UserDataTransferSize ([string]$Server, [string]$UserName, [string[]]$Folders) {
+    if ($Global:CancelRequested) { return @{ Bytes = [int64]0; Files = [int64]0; Exists = $false; Cancelled = $true; Details = @{} } }
+    $SrcBase = "\\$Server\C$\Users\$UserName"
+    if (-not (Test-Path -LiteralPath $SrcBase -PathType Container)) {
+        return @{ Bytes = [int64]0; Files = [int64]0; Exists = $false; Cancelled = $false; Details = @{} }
+    }
+    $totalBytes = [int64]0
+    $totalFiles = [int64]0
+    $details = [ordered]@{}
+
+    foreach ($folder in $Folders) {
+        if ($Global:CancelRequested) { return @{ Bytes = $totalBytes; Files = $totalFiles; Exists = $true; Cancelled = $true; Details = $details } }
+        $s = Join-Path $SrcBase $folder
+        if (Test-Path -LiteralPath $s -PathType Container) {
+            $meas = Measure-FolderDataSize $s
+            if ($meas.Cancelled) { return @{ Bytes = $totalBytes; Files = $totalFiles; Exists = $true; Cancelled = $true; Details = $details } }
+            $totalBytes += $meas.Bytes
+            $totalFiles += $meas.Files
+            $details[$folder] = @{ Bytes = $meas.Bytes; Files = $meas.Files }
+        }
+    }
+
+    # 1С:Предприятие (ibases.v8i, 1CEStart.cfg)
+    $src1c = Join-Path $SrcBase "AppData\Roaming\1C\1CEStart"
+    if (Test-Path -LiteralPath $src1c -PathType Container) {
+        $files1c = 0
+        $bytes1c = [int64]0
+        foreach ($file in @('ibases.v8i', '1CEStart.cfg')) {
+            $fp = Join-Path $src1c $file
+            if (Test-Path -LiteralPath $fp -PathType Leaf) {
+                try {
+                    $fi = Get-Item -LiteralPath $fp -Force -ErrorAction SilentlyContinue
+                    if ($fi) {
+                        $bytes1c += $fi.Length
+                        $files1c++
+                    }
+                } catch {}
+            }
+        }
+        if ($files1c -gt 0) {
+            $totalBytes += $bytes1c
+            $totalFiles += $files1c
+            $details['1C (Настройки)'] = @{ Bytes = $bytes1c; Files = $files1c }
+        }
+    }
+
+    return @{ Bytes = $totalBytes; Files = $totalFiles; Exists = $true; Cancelled = $false; Details = $details }
+}
+
 function Update-Progress ($val, $status = "") {
     $v = [math]::Max(0, [math]::Min(100, [int]$val))
     $Global:pbar.Value = $v
@@ -1318,7 +1499,7 @@ foreach ($button in @($btnHelp, $btnAbout, $btnExpandLog, $btnStop)) {
 function Set-UiBusy ($busy, $statusText = "") {
     $grpSettings.Enabled = -not $busy
     $gridUsers.Enabled = -not $busy
-    foreach ($stepButton in @($btnAudit, $btnSync, $btnDelta, $btnValidate, $btnShortcuts)) {
+    foreach ($stepButton in @($btnAudit, $btnEstimate, $btnSync, $btnDelta, $btnValidate, $btnShortcuts)) {
         $stepButton.Enabled = -not $busy
         $stepButton.BackColor = if ($busy) { $stepBusyColor } else { $stepReadyColor }
     }
@@ -1488,7 +1669,7 @@ $btnAudit.Add_Click({
             $dateStr = if ($LastLogonDate) { $LastLogonDate.ToString("yyyy-MM-dd HH:mm") } else { "Никогда" }
             $daysStr = if ($DaysAgo -eq 999999) { "-" } else { $DaysAgo.ToString() }
 
-            $rowIdx = $gridUsers.Rows.Add($isActive, $SamAccountName, $User.DisplayName, $dateStr, $daysStr, "Не проверен", $(if ($isActive) { "Активен" } else { "Неактивен" }))
+            $rowIdx = $gridUsers.Rows.Add($isActive, $SamAccountName, $User.DisplayName, $dateStr, $daysStr, "Не проверен", $(if ($isActive) { "Активен" } else { "Неактивен" }), "—")
             if (-not $isActive) {
                 $gridUsers.Rows[$rowIdx].DefaultCellStyle.ForeColor = [System.Drawing.Color]::Gray
             }
@@ -2399,6 +2580,100 @@ function Apply-SingleACL ($Profile) {
     }
 }
 
+# Обработчик: Оценка объема
+$btnEstimate.Add_Click({
+    [void]$gridUsers.EndEdit()
+    $selectedRows = @($gridUsers.Rows | Where-Object { $_.Cells[0].Value -eq $true })
+    if ($selectedRows.Count -eq 0) {
+        [void][System.Windows.Forms.MessageBox]::Show($form, "Отметьте пользователей для оценки объема переносимых данных!", "Внимание", "OK", "Warning")
+        return
+    }
+
+    $srcServer = $txtSrc.Text.Trim()
+    if ([string]::IsNullOrWhiteSpace($srcServer)) {
+        [void][System.Windows.Forms.MessageBox]::Show($form, "Укажите имя сервера-источника!", "Внимание", "OK", "Warning")
+        return
+    }
+
+    Set-UiBusy $true "Оценка объема переносимых данных..."
+    Update-Progress 0 "Запуск оценки объема для $($selectedRows.Count) профилей..."
+    try {
+        $targetRoot = [System.IO.Path]::GetPathRoot($Global:Config.ProfilesRoot)
+        $targetFree = Get-DriveFreeSpace $targetRoot
+        $freeMsg = if ($targetFree -ne $null) { " Свободно на целевом диске $($targetRoot): $(Format-ByteSize $targetFree)." } else { "" }
+        Write-GuiLog "Старт оценки объема данных $($selectedRows.Count) профилей с сервера \\$srcServer...$freeMsg" "INFO"
+
+        $totalUsers = $selectedRows.Count
+        $cur = 0
+        $grandBytes = [int64]0
+        $grandFiles = [int64]0
+        $notFoundCount = 0
+
+        foreach ($row in $selectedRows) {
+            if ($Global:CancelRequested) {
+                Write-GuiLog "Оценка объема прервана пользователем." "WARN"
+                break
+            }
+
+            $cur++
+            $user = [string]$row.Cells[1].Value
+            $pct = [math]::Min(100, [int](($cur / $totalUsers) * 100))
+            Update-Progress $pct "Оценка объема: $user ($cur из $totalUsers)"
+            Write-GuiLog "[$cur/$totalUsers] Оценка профиля: $user..." "INFO"
+
+            $res = Get-UserDataTransferSize $srcServer $user $Global:Config.TargetFolders
+
+            if ($Global:CancelRequested -or $res.Cancelled) {
+                Write-GuiLog "Оценка объема прервана пользователем." "WARN"
+                break
+            }
+
+            if (-not $res.Exists) {
+                $notFoundCount++
+                $row.Cells[7].Value = "Не найден"
+                $row.Cells[7].Style.ForeColor = [System.Drawing.Color]::DarkOrange
+                $row.Cells[7].ToolTipText = "Профиль $user не найден на сервере-источнике \\$srcServer"
+                $row.Tag = [pscustomobject]@{ EstimatedBytes = [int64]0; EstimatedFiles = [int64]0; ProfileExists = $false; Details = @{} }
+                Write-GuiLog "[$user] Папка профиля на источнике не найдена." "WARN"
+            } else {
+                $grandBytes += $res.Bytes
+                $grandFiles += $res.Files
+                $fmtSize = Format-ByteSize $res.Bytes
+                $row.Cells[7].Value = $fmtSize
+                $row.Cells[7].Style.ForeColor = [System.Drawing.Color]::FromArgb(15, 23, 42)
+                $row.Cells[7].ToolTipText = "Файлов: $($res.Files) | Объем: $(Format-ByteSize $res.Bytes) ($($res.Bytes) байт). Двойной клик — детализация."
+                $row.Tag = [pscustomobject]@{ EstimatedBytes = $res.Bytes; EstimatedFiles = $res.Files; ProfileExists = $true; Details = $res.Details }
+                Write-GuiLog "[$user] Оценочный объем: $fmtSize (файлов: $($res.Files))." "INFO"
+            }
+            [System.Windows.Forms.Application]::DoEvents()
+        }
+
+        Update-CountersAndFilter
+
+        if (-not $Global:CancelRequested) {
+            $grandFmt = Format-ByteSize $grandBytes
+            $summaryMsg = "Оценка объема завершена. Обработано профилей: $cur (общий объем: $grandFmt, файлов: $grandFiles)."
+            if ($targetFree -ne $null) {
+                $summaryMsg += " Свободно на целевом диске $($targetRoot): $(Format-ByteSize $targetFree)."
+            }
+            if ($targetFree -ne $null -and $grandBytes -gt $targetFree) {
+                Write-GuiLog "$summaryMsg ВНИМАНИЕ: Оценочный объем превышает свободное место на диске $targetRoot!" "WARN"
+                Update-Progress 100 "Оценка завершена: $grandFmt (ВНИМАНИЕ: МЕСТА МАЛО!)"
+            } else {
+                Write-GuiLog $summaryMsg "SUCCESS"
+                Update-Progress 100 "Оценка объема завершена ($grandFmt)"
+            }
+        } else {
+            Update-Progress $Global:pbar.Value "Оценка объема остановлена пользователем"
+        }
+    } catch {
+        Write-GuiLog "Ошибка оценки объема данных: $($_.Exception.Message)" "ERROR"
+        Update-Progress $Global:pbar.Value "Ошибка оценки объема"
+    } finally {
+        Set-UiBusy $false
+    }
+})
+
 # Обработчик 2: Пакетная синхронизация
 $btnSync.Add_Click({
     [void]$gridUsers.EndEdit()
@@ -2406,6 +2681,34 @@ $btnSync.Add_Click({
     if ($selectedRows.Count -eq 0) {
         [System.Windows.Forms.MessageBox]::Show("Отметьте галочками пользователей для миграции!", "Внимание", "OK", "Warning")
         return
+    }
+
+    # Проверка свободного места перед стартом
+    $targetRoot = [System.IO.Path]::GetPathRoot($Global:Config.ProfilesRoot)
+    $targetFree = Get-DriveFreeSpace $targetRoot
+    $estimatedBytes = [int64]0
+    $hasEstimated = $false
+    foreach ($r in $selectedRows) {
+        if ($r.Tag -and $r.Tag.PSObject.Properties['EstimatedBytes'] -and $r.Tag.EstimatedBytes -ge 0) {
+            $estimatedBytes += [int64]$r.Tag.EstimatedBytes
+            $hasEstimated = $true
+        }
+    }
+
+    if ($hasEstimated -and $targetFree -ne $null -and $estimatedBytes -gt $targetFree) {
+        $warnText = "ВНИМАНИЕ: Оценочный объем данных выбранных пользователей ($(Format-ByteSize $estimatedBytes)) превышает свободное место на целевом диске $targetRoot ($(Format-ByteSize $targetFree))!`r`n`r`nПродолжение может привести к переполнению диска.`r`nВы уверены, что хотите продолжить миграцию?"
+        if ([System.Windows.Forms.MessageBox]::Show($form, $warnText, "Предупреждение: Недостаточно места", "YesNo", "Warning") -ne 'Yes') {
+            Write-GuiLog "Миграция отменена пользователем из-за нехватки места на целевом диске." "WARN"
+            return
+        }
+    }
+
+    $sizeNotice = ""
+    if ($hasEstimated) {
+        $sizeNotice = " Оценочный объем данных: $(Format-ByteSize $estimatedBytes)."
+        if ($targetFree -ne $null) {
+            $sizeNotice += " Свободно на диске $($targetRoot): $(Format-ByteSize $targetFree)."
+        }
     }
 
     $dialog = New-Object System.Windows.Forms.Form
@@ -2418,7 +2721,7 @@ $btnSync.Add_Click({
     $dialog.MaximizeBox = $false
     $notice = New-Object System.Windows.Forms.Label
     $notice.SetBounds(14,12,532,78)
-    $notice.Text = "Выбрано пользователей: $($selectedRows.Count). Завершите их сеансы на обоих серверах до начала миграции. Отличающиеся файлы в выбранных папках могут быть обновлены."
+    $notice.Text = "Выбрано пользователей: $($selectedRows.Count).$sizeNotice Завершите их сеансы на обоих серверах до начала миграции. Отличающиеся файлы в выбранных папках могут быть обновлены."
     $outlook = New-Object System.Windows.Forms.CheckBox
     $outlook.SetBounds(14,90,532,44)
     $outlook.Text = 'Перенести настройки классического Outlook (POP3 и IMAP, экспериментально). Сохранить уже имеющиеся PST.'
