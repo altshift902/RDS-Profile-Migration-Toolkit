@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     ProfileMigrator GUI - Оконное графическое приложение (WPF/WinForms) для миграции профилей RDS.
 #>
@@ -6,7 +6,7 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-$script:AppVersion = '1.0.5'
+$script:AppVersion = '1.1.0'
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -73,7 +73,19 @@ function Select-TargetFolders ($Owner, $Folders) {
     $list.SetBounds(16, 62, 618, 260)
     $list.Anchor = 'Top, Bottom, Left, Right'
     $dialog.Controls.Add($list)
-    $choices = @('Desktop', 'Documents', 'Downloads', 'Favorites', 'Pictures', 'Music', 'Videos')
+    $choices = @(
+        'Desktop',
+        'Documents',
+        'Downloads',
+        'AppData\Local\Microsoft\Outlook',
+        'AppData\Local\Crypto Pro',
+        'AppData\Local\Google',
+        'AppData\Local\Yandex\YandexBrowser\User Data',
+        'Favorites',
+        'Pictures',
+        'Music',
+        'Videos'
+    )
     foreach ($folder in $Folders) { if ($choices -notcontains $folder) { $choices += $folder } }
     foreach ($folder in $choices) { [void]$list.Items.Add($folder, ($Folders -contains $folder)) }
     $customLabel = New-Object Windows.Forms.Label
@@ -512,7 +524,9 @@ $pnlGridTools.Controls.Add($btnLoadList)
 function Save-AuditList ($Grid, $Context, [string]$Path) {
     if (-not $Context -or -not $Grid.Rows.Count) { throw 'Нет списка для сохранения.' }
     [void]$Grid.EndEdit()
-    $rows = @(foreach ($row in $Grid.Rows) {
+    $selectedRows = @(foreach ($row in $Grid.Rows) { if ([bool]$row.Cells[0].Value) { $row } })
+    if ($selectedRows.Count -eq 0) { throw 'Нет отмеченных пользователей для сохранения. Отметьте нужные учетные записи галочками.' }
+    $rows = @(foreach ($row in $selectedRows) {
         [ordered]@{
             Selected = [bool]$row.Cells[0].Value
             Login = [string]$row.Cells[1].Value
@@ -559,7 +573,8 @@ $btnSaveList.Add_Click({
     try {
         $path = Join-Path $Global:Config.WorkDir 'AuditList.json'
         Save-AuditList $gridUsers $script:auditListContext $path
-        Write-GuiLog "Список и отметки пользователей сохранены: $path" 'SUCCESS'
+        $savedCount = @($gridUsers.Rows | Where-Object { [bool]$_.Cells[0].Value }).Count
+        Write-GuiLog "Сохранен список отмеченных пользователей ($savedCount): $path" 'SUCCESS'
     } catch { Write-GuiLog "Сохранение списка: $($_.Exception.Message)" 'ERROR' }
 })
 
@@ -602,17 +617,20 @@ function Update-CountersAndFilter {
     $lblCounter.Text = "Всего: $total | Выбрано: $selectedCount"
 }
 
-# Панель основных кнопок действий (2 четких ряда 4x2)
+# Панель основных кнопок действий (FlowLayoutPanel: по возможности в один ряд, если не помещаются — на второй с выравниванием влево)
 $pnlActions = New-Object System.Windows.Forms.FlowLayoutPanel
-$pnlActions.Location = New-Object System.Drawing.Point(15, 413)
-$pnlActions.Size = New-Object System.Drawing.Size(995, 72)
+$pnlActions.FlowDirection = [System.Windows.Forms.FlowDirection]::LeftToRight
+$pnlActions.WrapContents = $true
+$pnlActions.AutoScroll = $false
+$pnlActions.Location = New-Object System.Drawing.Point(15, 412)
+$pnlActions.Size = New-Object System.Drawing.Size(995, 80)
 $pnlActions.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
 $form.Controls.Add($pnlActions)
 
 # 1. Интерактивная плашка подсказок под кнопками действий (аккуратный информационный блок)
 $pnlHintBox = New-Object System.Windows.Forms.Panel
-$pnlHintBox.Location = New-Object System.Drawing.Point(15, 497)
-$pnlHintBox.Size = New-Object System.Drawing.Size(995, 24)
+$pnlHintBox.Location = New-Object System.Drawing.Point(15, 500)
+$pnlHintBox.Size = New-Object System.Drawing.Size(995, 23)
 $pnlHintBox.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
 $pnlHintBox.BackColor = [System.Drawing.Color]::FromArgb(241, 245, 249)
 $pnlHintBox.BorderStyle = "FixedSingle"
@@ -630,13 +648,12 @@ $pnlHintBox.Controls.Add($Global:lblHintText)
 function Create-ActionButton ($Title, $BgColor, $TipText) {
     $btn = New-Object System.Windows.Forms.Button
     $btn.Text = $Title
-    $btn.Size = New-Object System.Drawing.Size(318, 31)
     $btn.BackColor = $BgColor
     $btn.ForeColor = [System.Drawing.Color]::White
     $btn.FlatStyle = "Flat"
     $btn.FlatAppearance.BorderSize = 0
     $btn.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
-    $btn.Margin = New-Object System.Windows.Forms.Padding(0, 0, 14, 5)
+    $btn.Margin = New-Object System.Windows.Forms.Padding(0, 0, 8, 8)
     $btn.Tag = $TipText
     
     $btn.Add_MouseEnter({
@@ -655,33 +672,28 @@ function Create-ActionButton ($Title, $BgColor, $TipText) {
 $stepReadyColor = [System.Drawing.Color]::FromArgb(41, 128, 185)
 $stepBusyColor = [System.Drawing.Color]::FromArgb(206, 222, 234)
 $btnAudit = Create-ActionButton "1. Аудит OU (Поиск)" $stepReadyColor "Шаг 1: Поиск пользователей в OU; lastLogon по ответившим DC. Отмечает включенные учетные записи в пределах лимита."
-$pnlActions.Controls.Add($btnAudit)
-
 $btnSync = Create-ActionButton "2. Миграция выбранных" $stepReadyColor "Шаг 2: Для отмеченных пользователей готовит профиль, копирует TargetFolders и настройки запуска 1С, применяет ACL."
-$pnlActions.Controls.Add($btnSync)
-
 $btnDelta = Create-ActionButton "3. Докачка дельты (/XO)" $stepReadyColor "Шаг 3: Повторное копирование для отмеченных пользователей; /XO пропускает файлы источника старее целевых."
-$pnlActions.Controls.Add($btnDelta)
-
-
-
-
 $btnValidate = Create-ActionButton "4. Валидация профилей" $stepReadyColor "Шаг 4: Проверка отмеченных профилей: SID, путь, NTUSER.DAT, TargetFolders, состояние загрузки и базовые ACL."
-$pnlActions.Controls.Add($btnValidate)
-
 $btnShortcuts = Create-ActionButton "5. Проверка ярлыков" $stepReadyColor "Шаг 5: Проверка ярлыков на рабочем столе отмеченных пользователей. Выберите действие для каждого ярлыка в едином списке."
-$pnlActions.Controls.Add($btnShortcuts)
-
-
-
-
 $btnStop = Create-ActionButton "Остановить процесс" ([System.Drawing.Color]::FromArgb(160, 170, 180)) "Запрашивает остановку операции и завершает запущенный ею Robocopy или icacls. Уже выполненные изменения сохраняются."
 $btnStop.Enabled = $false
-$pnlActions.Controls.Add($btnStop)
+
+$actionButtons = @($btnAudit, $btnSync, $btnDelta, $btnValidate, $btnShortcuts, $btnStop)
+$maxActionTextWidth = 0
+foreach ($b in $actionButtons) {
+    $sz = [System.Windows.Forms.TextRenderer]::MeasureText($b.Text, $b.Font)
+    if ($sz.Width -gt $maxActionTextWidth) { $maxActionTextWidth = $sz.Width }
+}
+$actionButtonWidth = $maxActionTextWidth + 40
+foreach ($b in $actionButtons) {
+    $b.Size = New-Object System.Drawing.Size($actionButtonWidth, 35)
+    $pnlActions.Controls.Add($b)
+}
 
 # 2. Выделенный блок статуса и прогресса операции с отдельным заголовком и процентами
 $pnlProgressHeader = New-Object System.Windows.Forms.Panel
-$pnlProgressHeader.Location = New-Object System.Drawing.Point(15, 533)
+$pnlProgressHeader.Location = New-Object System.Drawing.Point(15, 530)
 $pnlProgressHeader.Size = New-Object System.Drawing.Size(995, 20)
 $pnlProgressHeader.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
 $form.Controls.Add($pnlProgressHeader)
@@ -736,7 +748,7 @@ namespace ProfileMigrator {
 $Global:pbar = New-Object ProfileMigrator.ToolkitProgressBar
 $Global:pbar.ForeColor = $stepReadyColor
 $Global:pbar.BackColor = [Drawing.Color]::FromArgb(231, 236, 241)
-$Global:pbar.Location = New-Object System.Drawing.Point(15, 557)
+$Global:pbar.Location = New-Object System.Drawing.Point(15, 554)
 $Global:pbar.Size = New-Object System.Drawing.Size(995, 18)
 $Global:pbar.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
 $Global:pbar.Visible = $true
@@ -747,7 +759,7 @@ $lblLogTitle = New-Object System.Windows.Forms.Label
 $lblLogTitle.Text = "Журнал операций и диагностика:"
 $lblLogTitle.Font = New-Object System.Drawing.Font("Segoe UI", 8.5, [System.Drawing.FontStyle]::Bold)
 $lblLogTitle.ForeColor = [System.Drawing.Color]::FromArgb(71, 85, 105)
-$lblLogTitle.Location = New-Object System.Drawing.Point(15, 587)
+$lblLogTitle.Location = New-Object System.Drawing.Point(15, 580)
 $lblLogTitle.Size = New-Object System.Drawing.Size(350, 16)
 $lblLogTitle.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left
 $form.Controls.Add($lblLogTitle)
@@ -760,14 +772,14 @@ $txtLogs.ReadOnly = $true
 $txtLogs.BackColor = [System.Drawing.Color]::FromArgb(15, 23, 42)
 $txtLogs.ForeColor = [System.Drawing.Color]::FromArgb(148, 163, 184)
 $txtLogs.Font = New-Object System.Drawing.Font("Consolas", 8.5)
-$txtLogs.Location = New-Object System.Drawing.Point(15, 607)
-$txtLogs.Size = New-Object System.Drawing.Size(995, 92)
+$txtLogs.Location = New-Object System.Drawing.Point(15, 600)
+$txtLogs.Size = New-Object System.Drawing.Size(995, 98)
 $txtLogs.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
 $form.Controls.Add($txtLogs)
 
 $btnExpandLog = New-Object System.Windows.Forms.Button
 $btnExpandLog.Text = "Развернуть журнал"
-$btnExpandLog.SetBounds(850, 581, 160, 25)
+$btnExpandLog.SetBounds(850, 574, 160, 24)
 $btnExpandLog.Anchor = 'Bottom, Right'
 Set-MainButtonStyle $btnExpandLog
 $form.Controls.Add($btnExpandLog)
@@ -947,7 +959,7 @@ $btnHelp.Add_Click({
     # Вкладка 1: Кнопки действий (Шаги 1-7)
     $actionsHelp = @(
         "1. Аудит OU (Поиск)|• Ищет учетные записи в указанном SearchBase и его вложенных подразделениях AD.`r`n• Запрашивает lastLogon у найденных контроллеров домена и берет наибольшее полученное значение. При недоступности DC результат может быть неполным.`r`n• Отмечает включенные учетные записи, у которых число дней после входа не превышает лимит. Если дата не получена, отображает «Никогда» и не ставит галочку.`r`n• Результат выводится в таблицу. CSV-отчет и ActiveUsersList.txt эта версия не создает.",
-        "2. Миграция выбранных|• После подтверждения обрабатывает только отмеченных пользователей по SID из AD. Зарегистрированный профиль использует по пути из ProfileList.`r`n• Если записи SID нет, но папка логина в системном каталоге профилей уже есть, регистрирует эту же папку без переименования и дубликатов. Подготовка добавляет только отсутствующие файлы из локального Default, сохраняет имеющиеся файлы и NTUSER.DAT, настраивает ACL.`r`n• Если нет ни записи, ни папки, создает профиль средствами Windows. Пользователь не должен входить на целевой сервер во время миграции.`r`n• Копирует папки TargetFolders с подпапками, включая пустые. По умолчанию: Desktop, Documents, Downloads. Переходы junction исключаются (/XJ).`r`n• Отдельно копирует ibases.v8i и 1CEStart.cfg из AppData\Roaming\1C\1CEStart, если они есть. Это настройки запуска, а не сами базы 1С.`r`n• Переносит данные, атрибуты и время файлов; затем применяет ACL на целевом профиле. При ошибках часть данных уже может быть скопирована.`r`n• Отличающиеся файлы назначения могут быть перезаписаны при последующем копировании с источника. Лишние файлы на цели и данные источника не удаляются.`r`n• При включении опции Outlook шаг 2 сохраняет существующие PST и извлекает почтовые настройки из временной копии исходного NTUSER.DAT. Загруженные, конфликтующие и некорректные целевые профили не обрабатываются.",
+        "2. Миграция выбранных|• После подтверждения обрабатывает только отмеченных пользователей по SID из AD. Зарегистрированный профиль использует по пути из ProfileList.`r`n• Если записи SID нет, но папка логина в системном каталоге профилей уже есть, регистрирует эту же папку без переименования и дубликатов. Подготовка добавляет только отсутствующие файлы из локального Default, сохраняет имеющиеся файлы и NTUSER.DAT, настраивает ACL.`r`n• Если нет ни записи, ни папки, создает профиль средствами Windows. Пользователь не должен входить на целевой сервер во время миграции.`r`n• Копирует папки TargetFolders с подпапками, включая пустые. По умолчанию: Desktop, Documents, Downloads, Outlook, Crypto Pro, Google, YandexBrowser. Переходы junction исключаются (/XJ).`r`n• Отдельно копирует ibases.v8i и 1CEStart.cfg из AppData\Roaming\1C\1CEStart, если они есть. Это настройки запуска, а не сами базы 1С.`r`n• Переносит данные, атрибуты и время файлов; затем применяет ACL на целевом профиле. При ошибках часть данных уже может быть скопирована.`r`n• Отличающиеся файлы назначения могут быть перезаписаны при последующем копировании с источника. Лишние файлы на цели и данные источника не удаляются.`r`n• При включении опции Outlook шаг 2 сохраняет существующие PST и извлекает почтовые настройки из временной копии исходного NTUSER.DAT. Загруженные, конфликтующие и некорректные целевые профили не обрабатываются.",
         "3. Докачка дельты (/XO)|• Выполняет тот же перенос для отмеченных пользователей, добавляя /XO: пропускает файлы источника, которые старее соответствующих файлов на цели.`r`n• Robocopy сравнивает текущее состояние файлов; дата первой миграции не хранится. Новые и отличающиеся файлы копируются с учетом /XO.`r`n• При отсутствии профиля и папки создает профиль Windows, затем применяет ACL. Если папка уже есть, но SID не зарегистрирован, требуется сначала шаг 2; дубликат папки не создается.`r`n• NTUSER.DAT сохраняется; лишние файлы на цели не удаляются. Пользователь не должен входить на целевой сервер во время копирования.`r`n• Время выполнения зависит от объема данных, сети и дисков. После докачки повторите валидацию.",
         "4. Изоляция прав ACL|• Работает с отмеченными, зарегистрированными и незагруженными профилями. Эта же настройка вызывается при миграции и докачке.`r`n• На корне профиля отключает наследование с сохранением унаследованных записей как явных (/inheritance:d).`r`n• Удаляет записи Everyone, Authenticated Users и Users в дереве профиля. Владельцем корня назначает пользователя по SID.`r`n• Выдает FullControl пользователю, SYSTEM и Administrators на корень, NTUSER.DAT и рекурсивно на существующие папки TargetFolders и настроек 1С.`r`n• Остальные явные разрешения не очищаются. Операция не является полной проверкой всех возможных доступов к профилю.",
         "5. Валидация профилей|• Проверяет только отмеченных пользователей и не копирует данные, не создает профили и не исправляет ACL.`r`n• Проверяет SID из AD, регистрацию и путь ProfileList, конфликты .bak, наличие непустого NTUSER.DAT и допустимое состояние целевого профиля.`r`n• Проверяет наличие всех папок TargetFolders; затем базовые FullControl для пользователя, SYSTEM и Administrators на корне, NTUSER.DAT и этих папках.`r`n• Отметка «1С» в примечании означает только наличие ibases.v8i. Его отсутствие само по себе не запрещает статус «Готов».`r`n• «Готов» — результат перечисленных проверок. Содержимое файлов, права каждого вложенного файла, вход в RDS и работу приложений проверяют отдельно.",
@@ -965,7 +977,7 @@ $btnHelp.Add_Click({
         "Лимит неактивности (дней)|• Используется при аудите для автоматической расстановки галочек; по умолчанию 90 дней.`r`n• Галочку получают включенные учетные записи с полученной датой входа в пределах лимита включительно.`r`n• Изменение лимита не пересчитывает текущую таблицу: запустите аудит повторно или измените отметки вручную.",
         "Выбор папок и сохранение настроек|• В основном окне нажмите «Папки переноса» и отметьте нужные папки. Чтобы добавить свою, введите путь относительно профиля и нажмите «Добавить».`r`n• «Применить» включает выбранные папки для текущего запуска. «Отмена» возвращает прежний выбор. Звездочка на кнопке указывает на несохраненные изменения.`r`n• Нажмите «Сохранить параметры». Программа запишет список TargetFolders, сервер-источник, OU, целевую папку, лимит неактивности и остальные настройки в pm_config.json рядом с EXE. После сохранения звездочка исчезнет.`r`n• При первом запуске программа создаст файл, если он отсутствует. При последующих запусках она загрузит сохраненные настройки и отметки папок.",
         "Папки TargetFolders|• Общий для выбранных пользователей массив папок относительно их профиля. Если параметра нет, копируются Desktop, Documents и Downloads.`r`n• Явный список заменяет стандартный. Пустой массив, абсолютные пути, UNC, маски и выход через .. не допускаются.`r`n• Отсутствие заданной папки на источнике отмечается как ошибка миграции; отсутствие на цели выявляется при валидации.`r`n• Два файла настроек запуска 1С копируются отдельно. Примеры дополнительных папок и ограничения переноса приложений приведены на вкладке «Профили и ПО» этой справки.",
-        "Журналы и повторный запуск|• LogsDir задает папку журналов Robocopy (по умолчанию C:\Migrate\Logs); она создается при копировании. Заранее создавать C:\Migrate не требуется.`r`n• «Сохранить список» записывает всю таблицу и галочки в AuditList.json в WorkDir (по умолчанию C:\Migrate). Повторное сохранение обновляет файл.`r`n• При следующем запуске нажмите «Загрузить список» с тем же источником и OU. Статусы и активность отражают сохраненные данные. Для обновления выполните аудит заново.`r`n• Уже созданные профили и файлы сохраняются. Повторная миграция или докачка использует их; автоматического продолжения остановленной операции нет."
+        "Журналы и повторный запуск|• LogsDir задает папку журналов Robocopy (по умолчанию C:\Migrate\Logs); она создается при копировании. Заранее создавать C:\Migrate не требуется.`r`n• «Сохранить список» записывает только отмеченных пользователей в AuditList.json в WorkDir (по умолчанию C:\Migrate). Повторное сохранение обновляет файл.`r`n• При следующем запуске нажмите «Загрузить список» с тем же источником и OU. Статусы и активность отражают сохраненные данные. Для обновления выполните аудит заново.`r`n• Уже созданные профили и файлы сохраняются. Повторная миграция или докачка использует их; автоматического продолжения остановленной операции нет."
     )
     Add-HelpTab "Параметры и настройки" $settingsHelp
 
@@ -2328,7 +2340,7 @@ function Invoke-UserFileSync ($UserName, $isDelta, [switch]$MigrateOutlook) {
     Assert-ProfileTargetPath $DstBase 'AppData\Roaming\1C\1CEStart'
     if (Test-Path $Src1C) {
         if (-not (Test-Path $Dst1C)) { New-Item -Path $Dst1C -ItemType Directory -Force | Out-Null }
-        Write-GuiLog "[$UserName] Синхронизация баз 1C..." "INFO"
+        Write-GuiLog "[$UserName] Синхронизация настроек 1C (список баз)..." "INFO"
         $args1c = @("$Src1C", "$Dst1C", "ibases.v8i", "1CEStart.cfg", "/COPY:DAT", "/R:1", "/W:1", "/NP")
         if ($isDelta) { $args1c += "/XO" }
         $res1c = Invoke-CliCommand "robocopy.exe" $args1c
@@ -2336,6 +2348,8 @@ function Invoke-UserFileSync ($UserName, $isDelta, [switch]$MigrateOutlook) {
         if ($res1c -lt 0 -or $res1c -ge 8) {
             $copyOk = $false
             Write-GuiLog "[$UserName] Ошибка копирования настроек 1С (Robocopy: $res1c)." "ERROR"
+        } else {
+            Write-GuiLog "[$UserName] Настройки 1С скопированы." "INFO"
         }
     }
     [System.Windows.Forms.Application]::DoEvents()
@@ -2343,7 +2357,9 @@ function Invoke-UserFileSync ($UserName, $isDelta, [switch]$MigrateOutlook) {
     if ($Global:CancelRequested) { return $false }
 
     # ACL
+    Write-GuiLog "[$UserName] Применение прав доступа (ACL)..." "INFO"
     Apply-SingleACL $profile
+    Write-GuiLog "[$UserName] Права доступа (ACL) настроены." "INFO"
     if ($copyOk -and $MigrateOutlook -and -not $isDelta -and -not $Global:CancelRequested) {
         try { Import-ClassicOutlookProfile $profile $SrcBase }
         catch {
@@ -2537,11 +2553,13 @@ $btnDelta.Add_Click({
     }
 })
 
-# Обработчик 4: Изоляция ACL
-$btnACL.Add_Click({
+# Контекстное меню таблицы: ручная изоляция ACL для отмеченных профилей
+$ctxGrid = New-Object System.Windows.Forms.ContextMenuStrip
+$menuItemAcl = $ctxGrid.Items.Add("Изолировать права ACL (для отмеченных)")
+$menuItemAcl.Add_Click({
     $selectedRows = @($gridUsers.Rows | Where-Object { $_.Cells[0].Value -eq $true })
     if ($selectedRows.Count -eq 0) {
-        [System.Windows.Forms.MessageBox]::Show("Отметьте пользователей для изоляции прав!", "Внимание", "OK", "Warning")
+        [void][System.Windows.Forms.MessageBox]::Show("Отметьте пользователей для изоляции прав!", "Внимание", "OK", "Warning")
         return
     }
 
@@ -2585,6 +2603,7 @@ $btnACL.Add_Click({
         Set-UiBusy $false
     }
 })
+$gridUsers.ContextMenuStrip = $ctxGrid
 
 function Get-ShortcutTarget ($Shell, [string]$Path) {
     $shortcut = $null
@@ -3016,32 +3035,6 @@ $btnShortcuts.Add_Click({
     } catch {
         Write-GuiLog "Ошибка очистки ярлыков: $($_.Exception.Message)" 'ERROR'
         Update-Progress $Global:pbar.Value 'Ошибка очистки ярлыков'
-    } finally {
-        Set-UiBusy $false
-    }
-})
-
-# Обработчик 7: FixRoot
-$btnFixRoot.Add_Click({
-    Set-UiBusy $true "Настройка прав на корень C:\Users..."
-    Update-Progress 10 "Запуск настройки C:\Users..."
-    try {
-        $root = $txtDst.Text.Trim()
-        Write-GuiLog "Применение безопасных прав на корень $root..." "INFO"
-        Update-Progress 25 "Удаление группы 'Все'..."
-        Invoke-CliCommand "icacls.exe" @("$root", "/remove", "*S-1-1-0") | Out-Null
-        if ($Global:CancelRequested) { return }
-
-        Update-Progress 50 "Удаление группы 'Пользователи'..."
-        Invoke-CliCommand "icacls.exe" @("$root", "/remove", "*S-1-5-32-545") | Out-Null
-        if ($Global:CancelRequested) { return }
-
-        Update-Progress 75 "Назначение эталонных прав для пользователей..."
-        Invoke-CliCommand "icacls.exe" @("$root", "/grant", "*S-1-5-32-545:(CI)(RX,WD,AD)") | Out-Null
-        if ($Global:CancelRequested) { return }
-
-        Update-Progress 100 "Безопасность C:\Users настроена"
-        Write-GuiLog "Каталог $root приведен к эталонному виду безопасности." "SUCCESS"
     } finally {
         Set-UiBusy $false
     }

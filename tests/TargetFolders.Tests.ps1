@@ -1,4 +1,4 @@
-﻿$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $scriptPath = Join-Path $projectRoot 'GUI\ProfileMigrator_GUI.ps1'
 $tokens = $null
@@ -72,10 +72,11 @@ try {
     $Global:Config.LogsDir = Join-Path $fixtureRoot 'logs'
     # First run: no configuration and no working/log directory must be required.
     Load-Config
-    Assert (($Global:Config.TargetFolders -join ',') -eq 'Desktop,Documents,Downloads') 'Missing config did not select exactly three default folders'
+    $expectedDefaults = 'Desktop,Documents,Downloads'
+    Assert (($Global:Config.TargetFolders -join ',') -eq $expectedDefaults) 'Missing config did not select default folders'
     Assert (Test-Path -LiteralPath $Global:ConfigFile) 'First launch did not create pm_config.json'
     $generated = Get-Content -LiteralPath $Global:ConfigFile -Raw | ConvertFrom-Json
-    Assert (($generated.TargetFolders -join ',') -eq 'Desktop,Documents,Downloads') 'Generated folder defaults incorrect'
+    Assert (($generated.TargetFolders -join ',') -eq $expectedDefaults) 'Generated folder defaults incorrect'
     Assert ($generated.SourceServer -eq 'SRV-SOURCE' -and $generated.InactiveDaysLimit -eq 90) 'Generated server/activity defaults incorrect'
     Assert ($generated.ProfilesRoot -eq 'C:\Users' -and $generated.WorkDir -eq 'C:\Migrate') 'Generated profile/work defaults incorrect'
     foreach ($key in $Global:Config.Keys) { Assert ($generated.PSObject.Properties.Name -contains $key) "Missing generated setting: $key" }
@@ -83,7 +84,7 @@ try {
     Set-Content -LiteralPath $Global:ConfigFile -Value '{}' -Encoding UTF8
     $Global:Config.TargetFolders = @('PreviousCustomFolder')
     Load-Config
-    Assert (($Global:Config.TargetFolders -join ',') -eq 'Desktop,Documents,Downloads') 'Absent TargetFolders did not restore default folders'
+    Assert (($Global:Config.TargetFolders -join ',') -eq $expectedDefaults) 'Absent TargetFolders did not restore default folders'
     Set-Content -LiteralPath $Global:ConfigFile -Value '{"SourceServer":"PM-TEST","TargetFolders":["WorkData"],"CustomSetting":"keep me"}' -Encoding UTF8
     $existingHash = (Get-FileHash -LiteralPath $Global:ConfigFile).Hash
     Load-Config
