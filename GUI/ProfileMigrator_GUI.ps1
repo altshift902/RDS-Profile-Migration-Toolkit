@@ -291,6 +291,49 @@ function Set-MainButtonStyle ([Windows.Forms.Button]$Button) {
     })
     if (-not $Button.Enabled) { $Button.BackColor = [Drawing.Color]::FromArgb(202,212,222) }
 }
+
+function Set-SecondaryButtonStyle ([Windows.Forms.Button]$Button) {
+    $Button.Font = New-Object Drawing.Font("Segoe UI", 9)
+    $Button.UseVisualStyleBackColor = $false
+    $Button.FlatStyle = 'Flat'
+    $Button.FlatAppearance.BorderSize = 1
+    $Button.FlatAppearance.BorderColor = [Drawing.Color]::FromArgb(203, 213, 225)
+    $Button.BackColor = [Drawing.Color]::FromArgb(238, 242, 246)
+    $Button.ForeColor = [Drawing.Color]::FromArgb(30, 41, 59)
+    $Button.Cursor = [System.Windows.Forms.Cursors]::Hand
+
+    $Button.Add_MouseEnter({
+        param($s, $e)
+        if ($s.Enabled) {
+            $s.BackColor = [Drawing.Color]::FromArgb(226, 232, 240)
+            $s.FlatAppearance.BorderColor = [Drawing.Color]::FromArgb(148, 163, 184)
+        }
+    })
+    $Button.Add_MouseLeave({
+        param($s, $e)
+        if ($s.Enabled) {
+            $s.BackColor = [Drawing.Color]::FromArgb(238, 242, 246)
+            $s.FlatAppearance.BorderColor = [Drawing.Color]::FromArgb(203, 213, 225)
+        }
+    })
+    $Button.Add_EnabledChanged({
+        param($sender, $eventArgs)
+        if ($sender.Enabled) {
+            $sender.BackColor = [Drawing.Color]::FromArgb(238, 242, 246)
+            $sender.ForeColor = [Drawing.Color]::FromArgb(30, 41, 59)
+            $sender.FlatAppearance.BorderColor = [Drawing.Color]::FromArgb(203, 213, 225)
+        } else {
+            $sender.BackColor = [Drawing.Color]::FromArgb(248, 250, 252)
+            $sender.ForeColor = [Drawing.Color]::FromArgb(160, 174, 192)
+            $sender.FlatAppearance.BorderColor = [Drawing.Color]::FromArgb(226, 232, 240)
+        }
+    })
+    if (-not $Button.Enabled) {
+        $Button.BackColor = [Drawing.Color]::FromArgb(248, 250, 252)
+        $Button.ForeColor = [Drawing.Color]::FromArgb(160, 174, 192)
+        $Button.FlatAppearance.BorderColor = [Drawing.Color]::FromArgb(226, 232, 240)
+    }
+}
 $btnHelp.Font = New-Object Drawing.Font("Segoe UI",9,[Drawing.FontStyle]::Bold)
 Set-MainButtonStyle $btnHelp
 $tooltip.SetToolTip($btnHelp, "Открыть подробное руководство по каждому шагу и кнопке миграции")
@@ -360,7 +403,7 @@ $grpSettings.Controls.Add($numLimit)
 $btnSaveCfg = New-Object System.Windows.Forms.Button
 $btnSaveCfg.Text = "Сохранить параметры"
 $btnSaveCfg.Size = New-Object System.Drawing.Size(195, 26)
-Set-MainButtonStyle $btnSaveCfg
+Set-SecondaryButtonStyle $btnSaveCfg
 $grpSettings.Controls.Add($btnSaveCfg)
 
 # Целевое OU
@@ -378,7 +421,7 @@ $grpSettings.Controls.Add($txtOU)
 $btnFolders = New-Object System.Windows.Forms.Button
 $btnFolders.Text = "Папки переноса ($($Global:Config.TargetFolders.Count))"
 $btnFolders.Size = New-Object Drawing.Size(195, 26)
-Set-MainButtonStyle $btnFolders
+Set-SecondaryButtonStyle $btnFolders
 $grpSettings.Controls.Add($btnFolders)
 $tooltip.SetToolTip($btnFolders, ($Global:Config.TargetFolders -join '; '))
 $btnFolders.Add_Click({
@@ -500,14 +543,14 @@ $btnSelectAll = New-Object System.Windows.Forms.Button
 $btnSelectAll.Text = "Выбрать все"
 $btnSelectAll.Size = New-Object System.Drawing.Size(95, 26)
 $btnSelectAll.Location = New-Object System.Drawing.Point(0, 2)
-Set-MainButtonStyle $btnSelectAll
+Set-SecondaryButtonStyle $btnSelectAll
 $pnlGridTools.Controls.Add($btnSelectAll)
 
 $btnDeselectAll = New-Object System.Windows.Forms.Button
 $btnDeselectAll.Text = "Снять выбор"
 $btnDeselectAll.Size = New-Object System.Drawing.Size(95, 26)
 $btnDeselectAll.Location = New-Object System.Drawing.Point(100, 2)
-Set-MainButtonStyle $btnDeselectAll
+Set-SecondaryButtonStyle $btnDeselectAll
 $pnlGridTools.Controls.Add($btnDeselectAll)
 
 # Фильтр "Показать только выбранные"
@@ -545,13 +588,13 @@ $btnSaveList.Text = 'Сохранить список'
 $btnSaveList.SetBounds(733,2,125,26)
 $btnSaveList.Anchor = 'Top,Right'
 $btnSaveList.Enabled = $false
-Set-MainButtonStyle $btnSaveList
+Set-SecondaryButtonStyle $btnSaveList
 $pnlGridTools.Controls.Add($btnSaveList)
 $btnLoadList = New-Object Windows.Forms.Button
 $btnLoadList.Text = 'Загрузить список'
 $btnLoadList.SetBounds(865,2,125,26)
 $btnLoadList.Anchor = 'Top,Right'
-Set-MainButtonStyle $btnLoadList
+Set-SecondaryButtonStyle $btnLoadList
 $pnlGridTools.Controls.Add($btnLoadList)
 
 function Format-ByteSize ([int64]$Bytes) {
@@ -863,7 +906,7 @@ $btnExpandLog = New-Object System.Windows.Forms.Button
 $btnExpandLog.Text = "Развернуть журнал"
 $btnExpandLog.SetBounds(850, 574, 160, 24)
 $btnExpandLog.Anchor = 'Bottom, Right'
-Set-MainButtonStyle $btnExpandLog
+Set-SecondaryButtonStyle $btnExpandLog
 $form.Controls.Add($btnExpandLog)
 $script:logWindow = $null
 $script:expandedLog = $null
