@@ -624,6 +624,11 @@ function Save-AuditList ($Grid, $Context, [string]$Path) {
     if ($selectedRows.Count -eq 0) { throw 'Нет отмеченных пользователей для сохранения. Отметьте нужные учетные записи галочками.' }
     $rows = @(foreach ($row in $selectedRows) {
         $sizeVal = if ($row.Cells.Count -gt 7 -and $row.Cells[7].Value) { [string]$row.Cells[7].Value } else { '—' }
+        $sidVal = if ($row.Tag -and $row.Tag.PSObject.Properties['Sid'] -and $row.Tag.Sid) {
+            [string]$row.Tag.Sid
+        } elseif ($row.Tag -and $row.Tag.PSObject.Properties['Profile'] -and $row.Tag.Profile.Sid) {
+            [string]$row.Tag.Profile.Sid
+        } else { $null }
         [ordered]@{
             Selected = [bool]$row.Cells[0].Value
             Login = [string]$row.Cells[1].Value
@@ -633,6 +638,7 @@ function Save-AuditList ($Grid, $Context, [string]$Path) {
             Status = [string]$row.Cells[5].Value
             Notes = [string]$row.Cells[6].Value
             Size = $sizeVal
+            Sid = $sidVal
             Inactive = $row.DefaultCellStyle.ForeColor -eq [Drawing.Color]::Gray
         }
     })
@@ -663,6 +669,9 @@ function Read-AuditList ([string]$Path, [string]$Server, [string]$OU) {
         if ($r.PSObject.Properties['Size'] -and $r.Size -isnot [string]) {
             throw "Некорректное поле списка: Size"
         }
+        if ($r.PSObject.Properties['Sid'] -and $r.Sid -ne $null -and $r.Sid -isnot [string]) {
+            throw "Некорректное поле списка: Sid"
+        }
         if ($r.Status -eq 'Готов') { $r.Status = 'Готов' }
         elseif ($r.Status -in @('Внимание','Требует внимания')) { $r.Status = 'Внимание' }
         $seen[$r.Login] = $true
@@ -685,15 +694,38 @@ $btnLoadList.Add_Click({
         $data = Read-AuditList $path $txtSrc.Text.Trim() $txtOU.Text.Trim()
         if ($gridUsers.Rows.Count -and [Windows.Forms.MessageBox]::Show($form,'Заменить текущую таблицу и галочки сохраненным списком?','Загрузить список','YesNo','Question') -ne 'Yes') { return }
         $gridUsers.Rows.Clear()
+        $regSnapshot = try { Get-ProfileRegistrySnapshot } catch { $null }
+        $migratedCount = 0
+        $readyCount = 0
         foreach ($r in $data.Rows) {
             $sizeVal = if ($r.PSObject.Properties['Size'] -and -not [string]::IsNullOrWhiteSpace($r.Size)) { [string]$r.Size } else { '—' }
-            $i = $gridUsers.Rows.Add($r.Selected,$r.Login,$r.Name,$r.LastLogon,$r.Days,$r.Status,$r.Notes,$sizeVal)
+            $sidVal = if ($r.PSObject.Properties['Sid'] -and $r.Sid) { [string]$r.Sid } else { $null }
+            $inspect = Get-LocalProfileInspection -UserName $r.Login -UserSid $sidVal -RegistrySnapshot $regSnapshot
+            $statusVal = if ($inspect.IsMigrated) { $inspect.Status } else { $r.Status }
+            $notesVal = if ($inspect.IsMigrated -and $inspect.Notes) { $inspect.Notes } else { $r.Notes }
+            $i = $gridUsers.Rows.Add($r.Selected,$r.Login,$r.Name,$r.LastLogon,$r.Days,$statusVal,$notesVal,$sizeVal)
             if ($r.Inactive) { $gridUsers.Rows[$i].DefaultCellStyle.ForeColor = [Drawing.Color]::Gray }
+            if ($inspect.IsMigrated) {
+                $migratedCount++
+                if ($inspect.Status -eq 'Готов') { $readyCount++ }
+                if ($inspect.ForeColor) {
+                    $gridUsers.Rows[$i].Cells[5].Style.ForeColor = $inspect.ForeColor
+                }
+            } elseif ($statusVal -eq 'Готов') {
+                $gridUsers.Rows[$i].Cells[5].Style.ForeColor = [Drawing.Color]::Green
+            } elseif ($statusVal -in @('Внимание','Требует внимания')) {
+                $gridUsers.Rows[$i].Cells[5].Style.ForeColor = [Drawing.Color]::DarkOrange
+            }
+            $gridUsers.Rows[$i].Cells[6].ToolTipText = $notesVal
+            if ($sidVal) {
+                $gridUsers.Rows[$i].Tag = @{ Sid = $sidVal }
+            }
         }
         $script:auditListContext = @{ Server=$data.Server; OU=$data.OU; AuditTime=$data.AuditTime }
         Update-CountersAndFilter
         $btnSaveList.Enabled = $true
-        Write-GuiLog "Загружено пользователей: $($data.Rows.Count). Данные аудита от $($data.AuditTime)." 'SUCCESS'
+        $migMsg = if ($migratedCount -gt 0) { " Перенесено на сервер: $migratedCount (готово: $readyCount)." } else { "" }
+        Write-GuiLog "Загружено пользователей: $($data.Rows.Count). Данные аудита от $($data.AuditTime).$migMsg" 'SUCCESS'
     } catch { Write-GuiLog "Загрузка списка: $($_.Exception.Message)" 'ERROR' }
 })
 
@@ -1678,6 +1710,9 @@ $btnAudit.Add_Click({
         $script:auditListContext = @{ Server=$txtSrc.Text.Trim(); OU=$txtOU.Text.Trim(); AuditTime=(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') }
         $total = $Users.Count
         $cur = 0
+        $regSnapshot = try { Get-ProfileRegistrySnapshot } catch { $null }
+        $alreadyMigratedCount = 0
+        $alreadyReadyCount = 0
 
         foreach ($User in $Users) {
             if ($Global:CancelRequested) {
@@ -1712,9 +1747,29 @@ $btnAudit.Add_Click({
             $dateStr = if ($LastLogonDate) { $LastLogonDate.ToString("yyyy-MM-dd HH:mm") } else { "Никогда" }
             $daysStr = if ($DaysAgo -eq 999999) { "-" } else { $DaysAgo.ToString() }
 
-            $rowIdx = $gridUsers.Rows.Add($isActive, $SamAccountName, $User.DisplayName, $dateStr, $daysStr, "Не проверен", $(if ($isActive) { "Активен" } else { "Неактивен" }), "—")
+            $userSid = if ($User.PSObject.Properties['SID'] -and $User.SID) { [string]$User.SID.Value } else { $null }
+            $inspect = Get-LocalProfileInspection -UserName $SamAccountName -UserSid $userSid -RegistrySnapshot $regSnapshot
+            $statusStr = if ($inspect.IsMigrated) { $inspect.Status } else { "Не проверен" }
+            $notesStr = if ($inspect.IsMigrated -and $inspect.Notes) {
+                $inspect.Notes
+            } else {
+                if ($isActive) { "Активен" } else { "Неактивен" }
+            }
+
+            $rowIdx = $gridUsers.Rows.Add($isActive, $SamAccountName, $User.DisplayName, $dateStr, $daysStr, $statusStr, $notesStr, "—")
             if (-not $isActive) {
                 $gridUsers.Rows[$rowIdx].DefaultCellStyle.ForeColor = [System.Drawing.Color]::Gray
+            }
+            if ($inspect.IsMigrated) {
+                $alreadyMigratedCount++
+                if ($inspect.Status -eq 'Готов') { $alreadyReadyCount++ }
+                if ($inspect.ForeColor) {
+                    $gridUsers.Rows[$rowIdx].Cells[5].Style.ForeColor = $inspect.ForeColor
+                }
+            }
+            $gridUsers.Rows[$rowIdx].Cells[6].ToolTipText = $notesStr
+            if ($userSid) {
+                $gridUsers.Rows[$rowIdx].Tag = @{ Sid = $userSid }
             }
             [System.Windows.Forms.Application]::DoEvents()
         }
@@ -1724,7 +1779,8 @@ $btnAudit.Add_Click({
             Write-GuiLog "Аудит остановлен. Загружено пользователей: $($gridUsers.Rows.Count)" "WARN"
             Update-Progress $Global:pbar.Value "Аудит остановлен пользователем"
         } else {
-            Write-GuiLog "Аудит завершен. Всего пользователей: $($gridUsers.Rows.Count)" "SUCCESS"
+            $migSummary = if ($alreadyMigratedCount -gt 0) { " Перенесено на сервер: $alreadyMigratedCount (готово: $alreadyReadyCount)." } else { "" }
+            Write-GuiLog "Аудит завершен. Всего пользователей: $($gridUsers.Rows.Count).$migSummary" "SUCCESS"
             Update-Progress 100 "Аудит завершен ($($gridUsers.Rows.Count) пользователей)"
         }
     } catch {
@@ -2203,6 +2259,123 @@ function Get-ProfileReadiness ([string]$UserName) {
     if ($missing.Count) { $issues += 'Нет папок: ' + ($missing -join ', ') }
     elseif (-not (Test-ProfilePermissions $profile)) { $issues += 'Проверьте ACL пользователя, SYSTEM и Administrators.' }
     return [pscustomobject]@{ Ready = ($issues.Count -eq 0); Profile = $profile; Issues = $issues }
+}
+
+function Get-LocalProfileInspection ([string]$UserName, [string]$UserSid = $null, $RegistrySnapshot = $null) {
+    if ([string]::IsNullOrWhiteSpace($UserName)) {
+        return [pscustomobject]@{ IsMigrated = $false; Status = 'Не проверен'; ForeColor = $null; Notes = $null; Profile = $null }
+    }
+
+    $snapshot = if ($RegistrySnapshot) { $RegistrySnapshot } else {
+        try { Get-ProfileRegistrySnapshot } catch { $null }
+    }
+
+    $matched = $null
+    if ($snapshot -and $snapshot.Entries) {
+        if ($UserSid) {
+            $matched = @($snapshot.Entries | Where-Object { $_.Sid -eq $UserSid })
+        }
+        if (-not $matched -or $matched.Count -eq 0) {
+            $expectedTarget = ConvertTo-LocalProfilePath (Join-Path $Global:Config.ProfilesRoot $UserName)
+            $matched = @($snapshot.Entries | Where-Object {
+                $_.Path -and (
+                    ((ConvertTo-LocalProfilePath $_.Path) -ieq $expectedTarget) -or
+                    ([IO.Path]::GetFileName($_.Path).ToLower() -eq $UserName.ToLower())
+                )
+            })
+        }
+    }
+
+    # Вариант 1: Профиль зарегистрирован в реестре Windows ProfileList
+    if ($matched -and $matched.Count -gt 0) {
+        $entry = $matched[0]
+        $regPath = ConvertTo-LocalProfilePath $entry.Path
+        $sid = $entry.Sid
+
+        if (-not (Test-Path -LiteralPath $regPath -PathType Container)) {
+            return [pscustomobject]@{
+                IsMigrated = $true
+                Status     = 'Внимание'
+                ForeColor  = [Drawing.Color]::DarkOrange
+                Notes      = "Зарегистрирован в ProfileList (SID $sid), но папка не найдена: $regPath"
+                Profile    = [pscustomobject]@{ UserName = $UserName; Sid = $sid; Path = $regPath }
+            }
+        }
+
+        $profile = [pscustomobject]@{ UserName = $UserName; Sid = $sid; Path = $regPath }
+        $issues = @()
+
+        # Проверка блокировки / загрузки сеанса
+        try {
+            Assert-ProfileOffline $profile -AllowLoaded:$false
+        } catch {
+            $issues += $_.Exception.Message
+        }
+
+        # Проверка обязательных папок
+        $missing = @()
+        try {
+            $missing = @(Get-MissingTargetFolders $regPath)
+        } catch {
+            $issues += "Ошибка проверки папок: $($_.Exception.Message)"
+        }
+        if ($missing.Count -gt 0) {
+            $issues += ('Нет папок: ' + ($missing -join ', '))
+        }
+
+        # Проверка файла реестра NTUSER.DAT и разрешений ACL
+        $hivePath = Join-Path $regPath 'NTUSER.DAT'
+        if (-not (Test-Path -LiteralPath $hivePath)) {
+            $issues += 'Отсутствует NTUSER.DAT'
+        } else {
+            try {
+                if (-not (Test-ProfilePermissions $profile)) {
+                    $issues += 'Проверьте ACL пользователя, SYSTEM и Administrators.'
+                }
+            } catch {
+                $issues += "Ошибка ACL: $($_.Exception.Message)"
+            }
+        }
+
+        # Проверка наличия файла баз 1C
+        $has1c = Test-Path -LiteralPath (Join-Path $regPath 'AppData\Roaming\1C\1CEStart\ibases.v8i') -PathType Leaf
+
+        $isReady = ($issues.Count -eq 0)
+        $statusStr = if ($isReady) { 'Готов' } else { 'Внимание' }
+        $foreColor = if ($isReady) { [Drawing.Color]::Green } else { [Drawing.Color]::DarkOrange }
+        $detailStr = if ($isReady) { 'готов' } else { ($issues -join '; ') }
+        $noteStr = "Уже перенесен; $detailStr; путь: $regPath; 1C: $has1c"
+
+        return [pscustomobject]@{
+            IsMigrated = $true
+            Status     = $statusStr
+            ForeColor  = $foreColor
+            Notes      = $noteStr
+            Profile    = $profile
+        }
+    }
+
+    # Вариант 2: Папка существует на диске в ProfilesRoot, но не зарегистрирована в ProfileList
+    $unregFolder = Join-Path $Global:Config.ProfilesRoot $UserName
+    if (Test-Path -LiteralPath $unregFolder -PathType Container) {
+        $has1c = Test-Path -LiteralPath (Join-Path $unregFolder 'AppData\Roaming\1C\1CEStart\ibases.v8i') -PathType Leaf
+        return [pscustomobject]@{
+            IsMigrated = $true
+            Status     = 'Внимание'
+            ForeColor  = [Drawing.Color]::DarkOrange
+            Notes      = "Папка $unregFolder найдена на диске, но не зарегистрирована в ProfileList; 1C: $has1c"
+            Profile    = [pscustomobject]@{ UserName = $UserName; Sid = $null; Path = $unregFolder }
+        }
+    }
+
+    # Вариант 3: Еще не перенесен
+    return [pscustomobject]@{
+        IsMigrated = $false
+        Status     = 'Не проверен'
+        ForeColor  = $null
+        Notes      = $null
+        Profile    = $null
+    }
 }
 
 function Copy-MissingOutlookPst ($Source, $Destination, $ProfileRoot) {
@@ -3386,7 +3559,54 @@ $btnShortcuts.Add_Click({
     }
 })
 
-Write-GuiLog "Программа готова к работе. Выполните аудит OU или нажмите «Загрузить список»." "INFO"
+# Автоматическая загрузка сохраненного списка при повторном запуске (если сохранен AuditList.json)
+$startupAuditPath = Join-Path $Global:Config.WorkDir 'AuditList.json'
+$autoLoaded = $false
+if (Test-Path -LiteralPath $startupAuditPath) {
+    try {
+        $savedData = Read-AuditList $startupAuditPath $txtSrc.Text.Trim() $txtOU.Text.Trim()
+        if ($savedData -and $savedData.Rows -and $savedData.Rows.Count -gt 0) {
+            $startupRegSnap = try { Get-ProfileRegistrySnapshot } catch { $null }
+            $migratedTotal = 0
+            $readyTotal = 0
+            foreach ($r in $savedData.Rows) {
+                $sizeVal = if ($r.PSObject.Properties['Size'] -and -not [string]::IsNullOrWhiteSpace($r.Size)) { [string]$r.Size } else { '—' }
+                $sidVal = if ($r.PSObject.Properties['Sid'] -and $r.Sid) { [string]$r.Sid } else { $null }
+                $inspect = Get-LocalProfileInspection -UserName $r.Login -UserSid $sidVal -RegistrySnapshot $startupRegSnap
+                $statusVal = if ($inspect.IsMigrated) { $inspect.Status } else { $r.Status }
+                $notesVal = if ($inspect.IsMigrated -and $inspect.Notes) { $inspect.Notes } else { $r.Notes }
+                $rowIdx = $gridUsers.Rows.Add($r.Selected,$r.Login,$r.Name,$r.LastLogon,$r.Days,$statusVal,$notesVal,$sizeVal)
+                if ($r.Inactive) { $gridUsers.Rows[$rowIdx].DefaultCellStyle.ForeColor = [Drawing.Color]::Gray }
+                if ($inspect.IsMigrated) {
+                    $migratedTotal++
+                    if ($inspect.Status -eq 'Готов') { $readyTotal++ }
+                    if ($inspect.ForeColor) {
+                        $gridUsers.Rows[$rowIdx].Cells[5].Style.ForeColor = $inspect.ForeColor
+                    }
+                } elseif ($statusVal -eq 'Готов') {
+                    $gridUsers.Rows[$rowIdx].Cells[5].Style.ForeColor = [Drawing.Color]::Green
+                } elseif ($statusVal -in @('Внимание','Требует внимания')) {
+                    $gridUsers.Rows[$rowIdx].Cells[5].Style.ForeColor = [Drawing.Color]::DarkOrange
+                }
+                $gridUsers.Rows[$rowIdx].Cells[6].ToolTipText = $notesVal
+                if ($sidVal) {
+                    $gridUsers.Rows[$rowIdx].Tag = @{ Sid = $sidVal }
+                }
+            }
+            $script:auditListContext = @{ Server=$savedData.Server; OU=$savedData.OU; AuditTime=$savedData.AuditTime }
+            Update-CountersAndFilter
+            $btnSaveList.Enabled = $true
+            $autoLoaded = $true
+            Write-GuiLog "Повторный запуск: загружен сохраненный список ($($savedData.Rows.Count) польз., аудит от $($savedData.AuditTime)). Перенесено: $migratedTotal (готово: $readyTotal)." "SUCCESS"
+        }
+    } catch {
+        Write-GuiLog "Сохраненный список $startupAuditPath пропущен: $($_.Exception.Message)" "INFO"
+    }
+}
+
+if (-not $autoLoaded) {
+    Write-GuiLog "Программа готова к работе. Выполните аудит OU или нажмите «Загрузить список»." "INFO"
+}
 Write-GuiLog "Конфигурация: $Global:ConfigFile. Папок в TargetFolders: $($Global:Config.TargetFolders.Count)." "INFO"
 if (-not (Get-Module -ListAvailable ActiveDirectory)) { Write-GuiLog "Внимание: Модуль ActiveDirectory (RSAT) не найден. При запуске аудита будет предложена автоматическая установка." "WARN" }
 
