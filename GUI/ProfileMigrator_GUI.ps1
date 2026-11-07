@@ -884,7 +884,7 @@ $lblLogTitle = New-Object System.Windows.Forms.Label
 $lblLogTitle.Text = "Журнал операций и диагностика:"
 $lblLogTitle.Font = New-Object System.Drawing.Font("Segoe UI", 8.5, [System.Drawing.FontStyle]::Bold)
 $lblLogTitle.ForeColor = [System.Drawing.Color]::FromArgb(71, 85, 105)
-$lblLogTitle.Location = New-Object System.Drawing.Point(15, 580)
+$lblLogTitle.Location = New-Object System.Drawing.Point(15, 586)
 $lblLogTitle.Size = New-Object System.Drawing.Size(350, 16)
 $lblLogTitle.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left
 $form.Controls.Add($lblLogTitle)
@@ -897,14 +897,14 @@ $txtLogs.ReadOnly = $true
 $txtLogs.BackColor = [System.Drawing.Color]::FromArgb(15, 23, 42)
 $txtLogs.ForeColor = [System.Drawing.Color]::FromArgb(148, 163, 184)
 $txtLogs.Font = New-Object System.Drawing.Font("Consolas", 8.5)
-$txtLogs.Location = New-Object System.Drawing.Point(15, 600)
-$txtLogs.Size = New-Object System.Drawing.Size(995, 98)
+$txtLogs.Location = New-Object System.Drawing.Point(15, 617)
+$txtLogs.Size = New-Object System.Drawing.Size(995, 84)
 $txtLogs.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
 $form.Controls.Add($txtLogs)
 
 $btnExpandLog = New-Object System.Windows.Forms.Button
 $btnExpandLog.Text = "Развернуть журнал"
-$btnExpandLog.SetBounds(850, 574, 160, 24)
+$btnExpandLog.SetBounds(850, 582, 160, 25)
 $btnExpandLog.Anchor = 'Bottom, Right'
 Set-SecondaryButtonStyle $btnExpandLog
 $form.Controls.Add($btnExpandLog)
