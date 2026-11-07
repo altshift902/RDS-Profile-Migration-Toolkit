@@ -2958,12 +2958,21 @@ $btnSync.Add_Click({
         return
     }
 
-    # Проверка свободного места перед стартом
+    # Определение уже перенесенных профилей
+    $alreadyMigratedRows = @($selectedRows | Where-Object {
+        $_.Cells[5].Value -in @('Готов', 'Скопирован') -or
+        "$($_.Cells[6].Value)".StartsWith('Уже перенесен')
+    })
+    $newRows = @($selectedRows | Where-Object { $_ -notin $alreadyMigratedRows })
+    $hasAlreadyMigrated = ($alreadyMigratedRows.Count -gt 0)
+
+    # Проверка свободного места перед стартом (по умолчанию для новых к переносу)
     $targetRoot = [System.IO.Path]::GetPathRoot($Global:Config.ProfilesRoot)
     $targetFree = Get-DriveFreeSpace $targetRoot
+    $checkRows = if ($hasAlreadyMigrated) { $newRows } else { $selectedRows }
     $estimatedBytes = [int64]0
     $hasEstimated = $false
-    foreach ($r in $selectedRows) {
+    foreach ($r in $checkRows) {
         if ($r.Tag -and $r.Tag.PSObject.Properties['EstimatedBytes'] -and $r.Tag.EstimatedBytes -ge 0) {
             $estimatedBytes += [int64]$r.Tag.EstimatedBytes
             $hasEstimated = $true
@@ -2978,55 +2987,118 @@ $btnSync.Add_Click({
         }
     }
 
-    $sizeNotice = ""
-    if ($hasEstimated) {
-        $sizeNotice = " Оценочный объем данных: $(Format-ByteSize $estimatedBytes)."
-        if ($targetFree -ne $null) {
-            $sizeNotice += " Свободно на диске $($targetRoot): $(Format-ByteSize $targetFree)."
-        }
-    }
-
     $dialog = New-Object System.Windows.Forms.Form
     $dialog.Text = "Шаг 2. Миграция выбранных пользователей"
-    $dialog.ClientSize = New-Object Drawing.Size(560,200)
+    $dialog.ClientSize = New-Object Drawing.Size(580, 240)
     $dialog.AutoScaleMode = 'Font'
     $dialog.FormBorderStyle = 'FixedDialog'
     $dialog.StartPosition = 'CenterParent'
     $dialog.MinimizeBox = $false
     $dialog.MaximizeBox = $false
+
     $notice = New-Object System.Windows.Forms.Label
-    $notice.SetBounds(14,12,532,78)
-    $notice.Text = "Выбрано пользователей: $($selectedRows.Count).$sizeNotice Завершите их сеансы на обоих серверах до начала миграции. Отличающиеся файлы в выбранных папках могут быть обновлены."
+    $notice.SetBounds(14, 12, 552, 64)
+
+    $chkSkipMigrated = $null
+    if ($hasAlreadyMigrated) {
+        $chkSkipMigrated = New-Object System.Windows.Forms.CheckBox
+        $chkSkipMigrated.SetBounds(14, 80, 552, 28)
+        $chkSkipMigrated.Text = "Пропускать уже перенесенные профили ($($alreadyMigratedRows.Count) из $($selectedRows.Count))"
+        $chkSkipMigrated.Checked = $true
+        $chkSkipMigrated.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
+        $chkSkipMigrated.ForeColor = [System.Drawing.Color]::FromArgb(24, 43, 73)
+        $dialog.Controls.Add($chkSkipMigrated)
+    }
+
+    $outlookTop = if ($hasAlreadyMigrated) { 114 } else { 82 }
     $outlook = New-Object System.Windows.Forms.CheckBox
-    $outlook.SetBounds(14,90,532,44)
+    $outlook.SetBounds(14, $outlookTop, 552, 42)
     $outlook.Text = 'Перенести настройки классического Outlook (POP3 и IMAP, экспериментально). Сохранить уже имеющиеся PST.'
+    $dialog.Controls.Add($outlook)
+
     $startButton = New-Object System.Windows.Forms.Button
-    $startButton.SetBounds(328,154,108,30)
+    $startButton.SetBounds(348, 192, 108, 32)
     $startButton.Text = 'Начать'
     $startButton.DialogResult = 'OK'
+
     $cancelButton = New-Object System.Windows.Forms.Button
-    $cancelButton.SetBounds(442,154,104,30)
+    $cancelButton.SetBounds(462, 192, 104, 32)
     $cancelButton.Text = 'Отмена'
     $cancelButton.DialogResult = 'Cancel'
-    $dialog.Controls.AddRange(@($notice,$outlook,$startButton,$cancelButton))
+
+    $UpdateNoticeText = {
+        $skip = if ($hasAlreadyMigrated -and $chkSkipMigrated) { $chkSkipMigrated.Checked } else { $false }
+        $effRows = if ($skip) { $newRows } else { $selectedRows }
+
+        $effBytes = [int64]0
+        $effMeasured = $false
+        foreach ($r in $effRows) {
+            if ($r.Tag -and $r.Tag.PSObject.Properties['EstimatedBytes'] -and $r.Tag.EstimatedBytes -ge 0) {
+                $effBytes += [int64]$r.Tag.EstimatedBytes
+                $effMeasured = $true
+            }
+        }
+        $szMsg = ""
+        if ($effMeasured) {
+            $szMsg = " Оценочный объем: $(Format-ByteSize $effBytes)."
+            if ($targetFree -ne $null) { $szMsg += " Свободно на диске $($targetRoot): $(Format-ByteSize $targetFree)." }
+        }
+
+        if ($effRows.Count -eq 0) {
+            $notice.Text = "Все выбранные пользователи ($($selectedRows.Count)) уже перенесены на целевой сервер.`r`nДля обновления данных используйте шаг «3. Докачка дельты (/XO)». Чтобы скопировать заново, снимите флажок пропуска."
+            $notice.ForeColor = [System.Drawing.Color]::DarkOrange
+            $startButton.Enabled = $false
+        } else {
+            $skipMsg = if ($skip -and $alreadyMigratedRows.Count -gt 0) {
+                "К первичной миграции: $($newRows.Count) (пропущено готовых: $($alreadyMigratedRows.Count))."
+            } else {
+                "Выбрано пользователей: $($selectedRows.Count)."
+            }
+            $notice.Text = "$skipMsg$szMsg Завершите их сеансы на обоих серверах до начала миграции. Отличающиеся файлы в выбранных папках могут быть обновлены."
+            $notice.ForeColor = [System.Drawing.Color]::Black
+            $startButton.Enabled = $true
+        }
+    }
+
+    if ($hasAlreadyMigrated -and $chkSkipMigrated) {
+        $chkSkipMigrated.Add_CheckedChanged({ & $UpdateNoticeText })
+    }
+    & $UpdateNoticeText
+
+    $dialog.Controls.AddRange(@($notice, $startButton, $cancelButton))
     $dialog.AcceptButton = $startButton
     $dialog.ActiveControl = $startButton
     $dialog.CancelButton = $cancelButton
+
     try {
         if ($dialog.ShowDialog($btnSync.FindForm()) -ne 'OK') { return }
         $includeOutlook = $outlook.Checked
+        $skipAlreadyMigrated = ($hasAlreadyMigrated -and $chkSkipMigrated.Checked)
     } finally { $dialog.Dispose() }
 
+    $rowsToMigrate = if ($skipAlreadyMigrated) { $newRows } else { $selectedRows }
+    if ($rowsToMigrate.Count -eq 0) {
+        Write-GuiLog "Все выбранные профили уже перенесены, миграция не требуется. Используйте «3. Докачка дельты (/XO)» для обновления." "INFO"
+        return
+    }
+
     Set-UiBusy $true "Пакетная миграция профилей..."
-    Update-Progress 0 "Запуск миграции $($selectedRows.Count) профилей..."
+    Update-Progress 0 "Запуск миграции $($rowsToMigrate.Count) профилей..."
     try {
         $mode = if ($includeOutlook) { 'с переносом настроек Outlook' } else { 'без переноса настроек Outlook' }
-        Write-GuiLog "Старт миграции $($selectedRows.Count) профилей $mode." "INFO"
+        $skipSummary = if ($skipAlreadyMigrated -and $alreadyMigratedRows.Count -gt 0) {
+            " (пропущено уже перенесенных: $($alreadyMigratedRows.Count))"
+        } else { "" }
+        Write-GuiLog "Старт миграции $($rowsToMigrate.Count) профилей $mode$skipSummary." "INFO"
+        if ($skipAlreadyMigrated -and $alreadyMigratedRows.Count -gt 0) {
+            $skippedLogins = @($alreadyMigratedRows | ForEach-Object { [string]$_.Cells[1].Value }) -join ', '
+            Write-GuiLog "Пропущены уже перенесенные профили ($($alreadyMigratedRows.Count)): $skippedLogins" "INFO"
+        }
         $cur = 0
         $failed = 0
         $warnings = 0
 
-        foreach ($row in $selectedRows) {
+        foreach ($row in $rowsToMigrate) {
             if ($Global:CancelRequested) {
                 Write-GuiLog "Пакетная миграция прервана пользователем." "WARN"
                 break
@@ -3034,9 +3106,9 @@ $btnSync.Add_Click({
 
             $cur++
             $user = $row.Cells[1].Value
-            $pct = [math]::Min(100, [int](($cur / $selectedRows.Count) * 100))
-            Update-Progress $pct "Миграция: $user ($cur из $($selectedRows.Count))"
-            Write-GuiLog "[$cur/$($selectedRows.Count)] Копирование профиля: $user..." "INFO"
+            $pct = [math]::Min(100, [int](($cur / $rowsToMigrate.Count) * 100))
+            Update-Progress $pct "Миграция: $user ($cur из $($rowsToMigrate.Count))"
+            Write-GuiLog "[$cur/$($rowsToMigrate.Count)] Копирование профиля: $user..." "INFO"
 
             $ok = if ($includeOutlook) {
                 Sync-UserFiles $user $false -MigrateOutlook
@@ -3065,8 +3137,9 @@ $btnSync.Add_Click({
         }
 
         if (-not $Global:CancelRequested) {
-            Write-GuiLog "Миграция завершена. Успешно: $($cur - $failed - $warnings); с предупреждениями: $warnings; ошибок: $failed." $(if ($failed -or $warnings) { 'WARN' } else { 'SUCCESS' })
-            Update-Progress 100 "Миграция завершена, с предупреждениями: $warnings, ошибок: $failed"
+            $skipEndMsg = if ($skipAlreadyMigrated -and $alreadyMigratedRows.Count -gt 0) { "; пропущено уже готовых: $($alreadyMigratedRows.Count)" } else { "" }
+            Write-GuiLog "Миграция завершена. Успешно: $($cur - $failed - $warnings); с предупреждениями: $warnings; ошибок: $failed$skipEndMsg." $(if ($failed -or $warnings) { 'WARN' } else { 'SUCCESS' })
+            Update-Progress 100 "Миграция завершена, с предупреждениями: $warnings, ошибок: $failed$skipEndMsg"
         } else {
             Update-Progress $Global:pbar.Value "Миграция остановлена пользователем"
         }
