@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     ProfileMigrator GUI - Оконное графическое приложение (WPF/WinForms) для миграции профилей RDS.
 #>
@@ -6,7 +6,7 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-$script:AppVersion = '1.2.0'
+$script:AppVersion = '1.2.1'
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -851,8 +851,9 @@ $pnlHintBox.BackColor = [System.Drawing.Color]::FromArgb(241, 245, 249)
 $pnlHintBox.BorderStyle = "FixedSingle"
 $form.Controls.Add($pnlHintBox)
 
+$Global:DefaultHint = "Подсказка: Наведите курсор на кнопку выше для описания шага | ПКМ по таблице — меню (права ACL, Проводник)"
 $Global:lblHintText = New-Object System.Windows.Forms.Label
-$Global:lblHintText.Text = "Подсказка: Наведите курсор на любую кнопку выше для просмотра её назначения"
+$Global:lblHintText.Text = $Global:DefaultHint
 $Global:lblHintText.Font = New-Object System.Drawing.Font("Segoe UI", 8.5)
 $Global:lblHintText.ForeColor = [System.Drawing.Color]::FromArgb(71, 85, 105)
 $Global:lblHintText.Dock = "Fill"
@@ -877,7 +878,7 @@ function Create-ActionButton ($Title, $BgColor, $TipText) {
         $Global:lblHintText.ForeColor = [System.Drawing.Color]::FromArgb(15, 23, 42)
     })
     $btn.Add_MouseLeave({
-        $Global:lblHintText.Text = "Подсказка: Наведите курсор на любую кнопку выше для просмотра её назначения"
+        $Global:lblHintText.Text = $Global:DefaultHint
         $Global:lblHintText.ForeColor = [System.Drawing.Color]::FromArgb(71, 85, 105)
     })
 
@@ -2290,8 +2291,15 @@ function Assert-ProfileTargetPath ([string]$ProfilePath, [string]$RelativePath) 
 
 function Test-ProfilePermissions ($Profile) {
     $paths = @($Profile.Path, (Join-Path $Profile.Path 'NTUSER.DAT'))
+    $appData = Join-Path $Profile.Path 'AppData'
+    if (Test-Path -LiteralPath $appData -PathType Container) {
+        $paths += $appData
+        $local = Join-Path $appData 'Local'
+        if (Test-Path -LiteralPath $local -PathType Container) { $paths += $local }
+    }
     $paths += @($Global:Config.TargetFolders | ForEach-Object { Join-Path $Profile.Path $_ })
     foreach ($path in $paths) {
+        if (-not (Test-Path -LiteralPath $path)) { continue }
         $acl = Get-Acl -LiteralPath $path -ErrorAction Stop
         $rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
         foreach ($sid in @($Profile.Sid, 'S-1-5-18', 'S-1-5-32-544')) {
@@ -2845,7 +2853,25 @@ function Apply-SingleACL ($Profile) {
     Invoke-ProfileAclCommand @($path, '/remove', '*S-1-1-0', '*S-1-5-11', '*S-1-5-32-545', '/T', '/L', '/C', '/Q')
     Invoke-ProfileAclCommand @($path, '/setowner', $userSid, '/L', '/C', '/Q')
     Invoke-ProfileAclCommand @($path, '/grant', "${userSid}:(OI)(CI)F", '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F', '/L', '/C', '/Q')
-    Invoke-ProfileAclCommand @((Join-Path $path 'NTUSER.DAT'), '/grant', "${userSid}:F", '*S-1-5-18:F', '*S-1-5-32-544:F', '/L', '/C', '/Q')
+
+    # Защита и владение файлов реестра (NTUSER.DAT, NTUSER.DAT.LOG*, ntuser.ini)
+    $hive = Join-Path $path 'NTUSER.DAT'
+    if (Test-Path -LiteralPath $hive) {
+        Invoke-ProfileAclCommand @($hive, '/setowner', $userSid, '/L', '/C', '/Q')
+        Invoke-ProfileAclCommand @($hive, '/grant', "${userSid}:F", '*S-1-5-18:F', '*S-1-5-32-544:F', '/L', '/C', '/Q')
+    }
+    $ntuserFiles = @(Get-ChildItem -LiteralPath $path -Force -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'ntuser*' -and $_.Name -ne 'NTUSER.DAT' })
+    foreach ($nu in $ntuserFiles) {
+        Invoke-ProfileAclCommand @($nu.FullName, '/setowner', $userSid, '/L', '/C', '/Q')
+        Invoke-ProfileAclCommand @($nu.FullName, '/grant', "${userSid}:F", '*S-1-5-18:F', '*S-1-5-32-544:F', '/L', '/C', '/Q')
+    }
+
+    # Рекурсивные права на ветку AppData (критично для gpsvc и создания GroupPolicy.ini)
+    $appData = Join-Path $path 'AppData'
+    if (Test-Path -LiteralPath $appData -PathType Container) {
+        Invoke-ProfileAclCommand @($appData, '/grant', "${userSid}:(OI)(CI)F", '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F', '/T', '/L', '/C', '/Q')
+    }
+
     foreach ($folder in @($Global:Config.TargetFolders) + @('AppData\Roaming\1C\1CEStart')) {
         Assert-ProfileTargetPath $path $folder
         $target = Join-Path $path $folder
@@ -3254,6 +3280,20 @@ $menuItemAcl.Add_Click({
         Set-UiBusy $false
     }
 })
+
+$menuItemOpen = $ctxGrid.Items.Add("Открыть папку профиля в Проводнике")
+$menuItemOpen.Add_Click({
+    if ($gridUsers.CurrentRow -and $gridUsers.CurrentRow.Index -ge 0) {
+        $user = [string]$gridUsers.CurrentRow.Cells[1].Value
+        $path = ConvertTo-LocalProfilePath (Join-Path $Global:Config.ProfilesRoot $user)
+        if (Test-Path -LiteralPath $path) {
+            Start-Process "explorer.exe" -ArgumentList "`"$path`""
+        } else {
+            [void][System.Windows.Forms.MessageBox]::Show($form, "Папка профиля еще не существует на целевом сервере: $path", "Информация", "OK", "Information")
+        }
+    }
+})
+
 $gridUsers.ContextMenuStrip = $ctxGrid
 
 function Get-ShortcutTarget ($Shell, [string]$Path) {
@@ -3592,6 +3632,7 @@ $btnValidate.Add_Click({
         Write-GuiLog "Запуск валидации отмеченных профилей: $($selectedRows.Count)..." "INFO"
         $total = $selectedRows.Count
         $cur = 0
+        $aclIssueRows = @()
 
         foreach ($row in $selectedRows) {
             if ($Global:CancelRequested) {
@@ -3611,12 +3652,18 @@ $btnValidate.Add_Click({
                 $has1c = Test-Path -LiteralPath (Join-Path $check.Profile.Path 'AppData\Roaming\1C\1CEStart\ibases.v8i') -PathType Leaf
                 $detail = if ($check.Ready) { 'SID, NTUSER.DAT, папки и базовые ACL: OK' } else { $check.Issues -join '; ' }
                 $row.Cells[6].Value = "$detail; путь: $($check.Profile.Path); 1C: $has1c"
-                if (-not $check.Ready) { Write-GuiLog "[$user] $detail" 'WARN' }
+                if (-not $check.Ready) {
+                    Write-GuiLog "[$user] $detail" 'WARN'
+                    if (@($check.Issues | Where-Object { $_ -match 'ACL' }).Count -gt 0) {
+                        $aclIssueRows += $row
+                    }
+                }
             } catch {
                 $row.Cells[5].Value = "Внимание"
                 $row.Cells[5].Style.ForeColor = [System.Drawing.Color]::DarkOrange
                 $row.Cells[6].Value = $_.Exception.Message
                 Write-GuiLog "[$user] $($_.Exception.Message)" 'WARN'
+                if ($_.Exception.Message -match 'ACL') { $aclIssueRows += $row }
             }
             $row.Cells[6].ToolTipText = $row.Cells[6].Value
             [System.Windows.Forms.Application]::DoEvents()
@@ -3625,6 +3672,42 @@ $btnValidate.Add_Click({
         if (-not $Global:CancelRequested) {
             Write-GuiLog "Валидация профилей завершена." "SUCCESS"
             Update-Progress 100 "Валидация профилей успешно завершена"
+
+            if ($aclIssueRows.Count -gt 0) {
+                $ans = [System.Windows.Forms.MessageBox]::Show(
+                    $form,
+                    "У $($aclIssueRows.Count) профилей обнаружены замечания по правам ACL (включая ветку AppData/NTUSER.DAT).`r`n`r`nИсправить и изолировать права ACL для этих профилей автоматически?",
+                    "Обнаружены проблемы с правами ACL",
+                    [System.Windows.Forms.MessageBoxButtons]::YesNo,
+                    [System.Windows.Forms.MessageBoxIcon]::Question
+                )
+                if ($ans -eq [System.Windows.Forms.DialogResult]::Yes) {
+                    Write-GuiLog "Запуск автоматического исправления ACL для $($aclIssueRows.Count) профилей..." "INFO"
+                    $fixedCount = 0
+                    foreach ($aclRow in $aclIssueRows) {
+                        $u = [string]$aclRow.Cells[1].Value
+                        try {
+                            $p = Get-UserProfileContext $u
+                            Apply-SingleACL $p
+                            $recheck = Get-ProfileReadiness $u
+                            if ($recheck.Ready) {
+                                $aclRow.Cells[5].Value = 'Готов'
+                                $aclRow.Cells[5].Style.ForeColor = [Drawing.Color]::Green
+                                $aclRow.Cells[6].Value = 'SID, NTUSER.DAT, папки и базовые ACL: OK'
+                                $fixedCount++
+                                Write-GuiLog "[$u] Права ACL успешно исправлены и подтверждены." "SUCCESS"
+                            } else {
+                                $aclRow.Cells[6].Value = $recheck.Issues -join '; '
+                                Write-GuiLog "[$u] После настройки ACL остались замечания: $($aclRow.Cells[6].Value)" "WARN"
+                            }
+                            $aclRow.Cells[6].ToolTipText = $aclRow.Cells[6].Value
+                        } catch {
+                            Write-GuiLog "[$u] Ошибка исправления ACL: $($_.Exception.Message)" "ERROR"
+                        }
+                    }
+                    Write-GuiLog "Автоматическое исправление ACL завершено. Успешно исправлено: $fixedCount из $($aclIssueRows.Count)." $(if ($fixedCount -eq $aclIssueRows.Count) { 'SUCCESS' } else { 'WARN' })
+                }
+            }
         } else {
             Update-Progress $Global:pbar.Value "Валидация остановлена пользователем"
         }
