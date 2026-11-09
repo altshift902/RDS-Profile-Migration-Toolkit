@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     ProfileMigrator GUI - Оконное графическое приложение (WPF/WinForms) для миграции профилей RDS.
 #>
@@ -6,7 +6,7 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-$script:AppVersion = '1.2.0-dev.1'
+$script:AppVersion = '1.2.0'
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
