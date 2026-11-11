@@ -6,7 +6,7 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-$script:AppVersion = '1.2.1'
+$script:AppVersion = '1.3.0'
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -77,6 +77,7 @@ function Select-TargetFolders ($Owner, $Folders) {
         'Desktop',
         'Documents',
         'Downloads',
+        'AppData\Roaming\1C\1CEStart',
         'AppData\Local\Microsoft\Outlook',
         'AppData\Local\Crypto Pro',
         'AppData\Local\Google',
@@ -553,11 +554,59 @@ $btnDeselectAll.Location = New-Object System.Drawing.Point(100, 2)
 Set-SecondaryButtonStyle $btnDeselectAll
 $pnlGridTools.Controls.Add($btnDeselectAll)
 
+# Кнопка переключения фильтра "Скрыть «Никогда»"
+$script:hideNeverLogon = $false
+$btnHideNever = New-Object System.Windows.Forms.Button
+$btnHideNever.Text = "Скрыть «Никогда»"
+$btnHideNever.Size = New-Object System.Drawing.Size(130, 26)
+$btnHideNever.Location = New-Object System.Drawing.Point(200, 2)
+$btnHideNever.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$btnHideNever.UseVisualStyleBackColor = $false
+$btnHideNever.FlatStyle = 'Flat'
+$btnHideNever.FlatAppearance.BorderSize = 1
+$btnHideNever.Cursor = [System.Windows.Forms.Cursors]::Hand
+
+function Update-NeverButtonAppearance {
+    if (-not $btnHideNever.Enabled) {
+        $btnHideNever.BackColor = [System.Drawing.Color]::FromArgb(241, 245, 249)
+        $btnHideNever.ForeColor = [System.Drawing.Color]::FromArgb(148, 163, 184)
+        $btnHideNever.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(226, 232, 240)
+        return
+    }
+    if ($script:hideNeverLogon) {
+        $btnHideNever.Text = "Показать «Никогда»"
+        $btnHideNever.BackColor = [System.Drawing.Color]::FromArgb(224, 242, 254)
+        $btnHideNever.ForeColor = [System.Drawing.Color]::FromArgb(3, 105, 161)
+        $btnHideNever.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(56, 189, 248)
+    } else {
+        $btnHideNever.Text = "Скрыть «Никогда»"
+        $btnHideNever.BackColor = [System.Drawing.Color]::FromArgb(238, 242, 246)
+        $btnHideNever.ForeColor = [System.Drawing.Color]::FromArgb(30, 41, 59)
+        $btnHideNever.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(203, 213, 225)
+    }
+}
+
+$btnHideNever.Add_MouseEnter({
+    if ($btnHideNever.Enabled) {
+        if ($script:hideNeverLogon) {
+            $btnHideNever.BackColor = [System.Drawing.Color]::FromArgb(186, 230, 253)
+            $btnHideNever.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(2, 132, 199)
+        } else {
+            $btnHideNever.BackColor = [System.Drawing.Color]::FromArgb(226, 232, 240)
+            $btnHideNever.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(148, 163, 184)
+        }
+    }
+})
+$btnHideNever.Add_MouseLeave({ Update-NeverButtonAppearance })
+$btnHideNever.Add_EnabledChanged({ Update-NeverButtonAppearance })
+Update-NeverButtonAppearance
+$pnlGridTools.Controls.Add($btnHideNever)
+
 # Фильтр "Показать только выбранные"
 $chkOnlySelected = New-Object System.Windows.Forms.CheckBox
 $chkOnlySelected.Text = "Только выбранные"
 $chkOnlySelected.AutoSize = $true
-$chkOnlySelected.Location = New-Object System.Drawing.Point(210, 6)
+$chkOnlySelected.Location = New-Object System.Drawing.Point(340, 6)
 $chkOnlySelected.ForeColor = [System.Drawing.Color]::FromArgb(30, 41, 59)
 $pnlGridTools.Controls.Add($chkOnlySelected)
 
@@ -565,13 +614,13 @@ $pnlGridTools.Controls.Add($chkOnlySelected)
 $lblSearch = New-Object System.Windows.Forms.Label
 $lblSearch.Text = "Поиск:"
 $lblSearch.AutoSize = $true
-$lblSearch.Location = New-Object System.Drawing.Point(360, 7)
+$lblSearch.Location = New-Object System.Drawing.Point(475, 7)
 $lblSearch.ForeColor = [System.Drawing.Color]::DarkSlateGray
 $pnlGridTools.Controls.Add($lblSearch)
 
 $txtSearch = New-Object System.Windows.Forms.TextBox
 $txtSearch.Size = New-Object System.Drawing.Size(130, 23)
-$txtSearch.Location = New-Object System.Drawing.Point(405, 4)
+$txtSearch.Location = New-Object System.Drawing.Point(520, 4)
 $pnlGridTools.Controls.Add($txtSearch)
 
 # Счетчик пользователей и выбранных (2-я строка панели инструментов списка)
@@ -795,6 +844,7 @@ function Update-CountersAndFilter {
     $measuredCount = 0
     $filterText = $txtSearch.Text.Trim().ToLower()
     $onlyChecked = $chkOnlySelected.Checked
+    $hideNever = $script:hideNeverLogon
 
     foreach ($row in $gridUsers.Rows) {
         $isChecked = [bool]$row.Cells[0].Value
@@ -808,11 +858,14 @@ function Update-CountersAndFilter {
 
         $login = "$($row.Cells[1].Value)".ToLower()
         $fio = "$($row.Cells[2].Value)".ToLower()
+        $lastLogon = "$($row.Cells[3].Value)".Trim()
 
         $matchesSearch = [string]::IsNullOrEmpty($filterText) -or ($login.Contains($filterText) -or $fio.Contains($filterText))
         $matchesCheck = (-not $onlyChecked) -or $isChecked
+        $isNever = ($lastLogon.Equals("Никогда", [System.StringComparison]::OrdinalIgnoreCase)) -or [string]::IsNullOrWhiteSpace($lastLogon) -or ($lastLogon -eq "-")
+        $matchesNever = (-not $hideNever) -or (-not $isNever)
 
-        $row.Visible = ($matchesSearch -and $matchesCheck)
+        $row.Visible = ($matchesSearch -and $matchesCheck -and $matchesNever)
     }
 
     $targetRoot = [System.IO.Path]::GetPathRoot($Global:Config.ProfilesRoot)
@@ -1177,18 +1230,18 @@ $btnHelp.Add_Click({
     $actionsHelp = @(
         "1. Аудит OU (Поиск)|• Ищет учетные записи в указанном SearchBase и его вложенных подразделениях AD.`r`n• Запрашивает lastLogon у найденных контроллеров домена и берет наибольшее полученное значение. При недоступности DC результат может быть неполным.`r`n• Отмечает включенные учетные записи, у которых число дней после входа не превышает лимит. Если дата не получена, отображает «Никогда» и не ставит галочку.`r`n• Отображает статус готовности уже перенесенных профилей при повторном аудите.`r`n• Результат выводится в таблицу. CSV-отчет и ActiveUsersList.txt эта версия не создает.",
         "Оценка объема|• Сканирует папки TargetFolders и настройки 1С на сервере-источнике для отмеченных пользователей в режиме dry-run (Robocopy /L) без копирования данных.`r`n• Определяет суммарный объем данных и число файлов, отображая результат в столбце «Размер». Двойной клик на ячейке открывает детализацию по каждой папке.`r`n• Клик по заголовку столбца «Размер» выполняет численную сортировку таблицы, позволяя мгновенно выявить самые тяжелые профили.`r`n• Проверяет доступное место на целевом диске (обычно C:\) и предупреждает при риске переполнения диска (Disk Full).`r`n• В строке счетчиков отображает суммарный объем выбранных пользователей в реальном времени.",
-        "2. Миграция выбранных|• После подтверждения обрабатывает только отмеченных пользователей по SID из AD. Зарегистрированный профиль использует по пути из ProfileList.`r`n• Умный пропуск: если отмечены все пользователи (кнопка «Выбрать все»), программа автоматически предлагает пропустить уже готовые профили, исключая повторное копирование.`r`n• Если записи SID нет, но папка логина в системном каталоге профилей уже есть, регистрирует эту же папку без переименования и дубликатов. Подготовка добавляет только отсутствующие файлы из локального Default, сохраняет имеющиеся файлы и NTUSER.DAT, настраивает ACL.`r`n• Если нет ни записи, ни папки, создает профиль средствами Windows. Пользователь не должен входить на целевой сервер во время миграции.`r`n• Копирует папки TargetFolders с подпапками, включая пустые (по умолчанию: Desktop, Documents, Downloads, Outlook, Crypto Pro, Google, YandexBrowser). Переходы junction исключаются (/XJ).`r`n• Отдельно копирует ibases.v8i и 1CEStart.cfg из AppData\Roaming\1C\1CEStart, если они есть. Это настройки запуска, а не сами базы 1С.`r`n• Переносит данные, атрибуты и время файлов; затем применяет изолированные ACL (пользователь, SYSTEM, Administrators) на корень профиля, AppData и NTUSER.DAT.`r`n• При включении опции Outlook шаг 2 сохраняет существующие PST и извлекает почтовые настройки из временной копии исходного NTUSER.DAT.",
-        "3. Докачка дельты (/XO)|• Выполняет тот же перенос для отмеченных пользователей, добавляя /XO: пропускает файлы источника, которые старее соответствующих файлов на цели.`r`n• Robocopy сравнивает текущее состояние файлов; дата первой миграции не хранится. Новые и отличающиеся файлы копируются с учетом /XO.`r`n• При отсутствии профиля и папки создает профиль Windows, затем применяет ACL. Если папка уже есть, но SID не зарегистрирован, требуется сначала шаг 2; дубликат папки не создается.`r`n• NTUSER.DAT сохраняется; лишние файлы на цели не удаляются. Пользователь не должен входить на целевой сервер во время копирования.`r`n• Время выполнения зависит от объема данных, сети и дисков. После докачки повторите шаг 4 («Валидация профилей»).",
+        "2. Миграция выбранных|• После подтверждения обрабатывает только отмеченных пользователей по SID из AD. Зарегистрированный профиль использует по пути из ProfileList.`r`n• Умный пропуск: если отмечены все пользователи (кнопка «Выбрать все»), программа автоматически предлагает пропустить уже готовые профили, исключая повторное копирование.`r`n• Если записи SID нет, но папка логина в системном каталоге профилей уже есть, регистрирует эту же папку без переименования и дубликатов. Подготовка добавляет только отсутствующие файлы из локального Default, сохраняет имеющиеся файлы и NTUSER.DAT, настраивает ACL.`r`n• Если нет ни записи, ни папки, создает профиль средствами Windows. Пользователь не должен входить на целевой сервер во время миграции.`r`n• Копирует папки TargetFolders с подпапками, включая пустые (по умолчанию: Desktop, Documents, Downloads, Outlook, Crypto Pro, Google, YandexBrowser). Переходы junction исключаются (/XJ).`r`n• Отдельно копирует ibases.v8i и 1CEStart.cfg из AppData\Roaming\1C\1CEStart, если переносится полный профиль или папка 1С явно выбрана в TargetFolders. Это настройки запуска, а не сами базы 1С.`r`n• Переносит данные, атрибуты и время файлов; затем применяет изолированные ACL (пользователь, SYSTEM, Administrators) на корень профиля, AppData и NTUSER.DAT.`r`n• При включении опции Outlook шаг 2 сохраняет существующие PST и извлекает почтовые настройки из временной копии исходного NTUSER.DAT.",
+        "3. Докачка дельты (/XO)|• Выполняет перенос выбранных папок для отмеченных пользователей, добавляя /XO: пропускает файлы источника, которые старее соответствующих файлов на цели.`r`n• Robocopy сравнивает текущее состояние файлов; дата первой миграции не хранится. Новые и отличающиеся файлы копируются с учетом /XO.`r`n• При отсутствии профиля и папки создает профиль Windows. Если папка уже есть, но SID не зарегистрирован, требуется сначала шаг 2; дубликат папки не создается.`r`n• Права доступа (ACL) при докачке дельты применяются точечно только к обновленным папкам без сканирования всего профиля; настройки 1С синхронизируются только если папка AppData\Roaming\1C\1CEStart явно выбрана в TargetFolders.`r`n• NTUSER.DAT сохраняется; лишние файлы на цели не удаляются. Пользователь не должен входить на целевой сервер во время копирования.`r`n• Время выполнения зависит от объема данных, сети и дисков. После докачки при необходимости повторите шаг 4 («Валидация профилей»).",
         "4. Валидация профилей|• Выполняет полную проверку готовности отмеченных профилей к первому входу в RDS без изменения пользовательских файлов.`r`n• Проверяет SID из AD, регистрацию и путь ProfileList, отсутствие конфликтов .bak, наличие непустого NTUSER.DAT и всех обязательных папок TargetFolders.`r`n• Проверяет рекурсивные права ACL (FullControl для пользователя, SYSTEM и Administrators) на корне профиля, ветке AppData (Local/Roaming) и файлах реестра.`r`n• Автоматическое исправление: при обнаружении несоответствий в правах ACL программа предлагает в один клик автоматически переприменить и исправить права доступа.`r`n• Отметка «1С» в примечании означает наличие ibases.v8i. Его отсутствие само по себе не запрещает статус «Готов».`r`n• «Готов» — результат успешного прохождения всех проверок.",
         "5. Проверка ярлыков|• Ищет файлы .lnk в Desktop и его подпапках только у отмеченных пользователей с зарегистрированным профилем.`r`n• В список попадают ярлыки с непустой целью, для которой не найден доступный файл или каталог. Для целей в AppData другого профиля предлагает существующий файл по тому же относительному пути у владельца ярлыка.`r`n• Для ярлыков профильной установки Яндекс Браузера общий список показывает старый путь и найденный browser.exe в Program Files. После подтверждения изменяется цель с сохранением аргументов.`r`n• Перед удалением показывает пользователя, путь ярлыка и цель. Можно отметить строки галочками и назначить «Заменить» или «Удалить». «Применить» выполняет только назначенные действия у отмеченных строк.",
-        "Контекстное меню (ПКМ)|• Клик правой кнопкой мыши по любой строке в таблице пользователей открывает контекстное меню:`r`n• «Изолировать права ACL (для отмеченных)» — принудительно переприменяет права доступа (пользователь по SID, SYSTEM, Administrators) на корень профиля, AppData и файлы реестра NTUSER.DAT.`r`n• «Открыть папку профиля в Проводнике» — открывает каталог пользователя C:\Users\логин в проводнике Windows для быстрой проверки файлов.",
+        "Контекстное меню (ПКМ)|• Клик правой кнопкой мыши по любой строке в таблице пользователей открывает контекстное меню:`r`n• «Изолировать права ACL (для отмеченных)» — принудительно переприменяет права доступа (пользователь по SID, SYSTEM, Administrators) на корень профиля, AppData и файлы реестра NTUSER.DAT.`r`n• «Открыть папку на целевом сервере» — открывает каталог профиля на текущем сервере в Проводнике Windows.`r`n• «Открыть папку на сервере-источнике» — открывает исходный профиль на сервере-источнике через сетевой доступ SMB (с автоматическим определением фактической папки по SID, если имя пользователя в домене менялось).`r`n• «Открыть обе папки (источник и цель)» — открывает в Проводнике сразу обе папки для удобного сравнения файлов бок о бок.",
         "Остановить процесс|• Запрашивает остановку текущей операции; если она запустила Robocopy или icacls, завершает этот процесс.`r`n• Запрос AD или файловая проверка могут завершиться до обработки отмены: мгновенная остановка не гарантируется.`r`n• Уже созданные профили, скопированные файлы, примененные ACL и удаленные ярлыки не откатываются.`r`n• Кнопка доступна во время операции. После остановки проверьте журнал и состояние затронутых профилей."
     )
     Add-HelpTab "Основные шаги (1-5 и остановка)" $actionsHelp
 
     # Вкладка 2: Настройки и параметры
     $settingsHelp = @(
-        "Сервер-источник|• Имя или IP компьютера, с которого читаются данные. Программу запускают на целевом сервере.`r`n• Для каждого логина AD источник всегда имеет вид \\сервер\C$\Users\логин. Путь ProfileList исходного сервера программа не определяет.`r`n• Требуются SMB-доступ (TCP 445) и права чтения C$. Каталог профиля на источнике должен совпадать с логином; другое размещение требует отдельной подготовки.",
+        "Сервер-источник|• Имя или IP компьютера, с которого читаются данные. Программу запускают на целевом сервере.`r`n• По умолчанию профиль ищется по пути \\сервер\C$\Users\логин.`r`n• Автоматическое определение переименованных профилей: если логин учетной записи был изменен в AD, а папка на источнике осталась со старым именем, программа автоматически находит фактическую папку по SID пользователя через ProfileList источника или ACL реестра.`r`n• Требуются SMB-доступ (TCP 445) и права чтения C$.",
         "Целевая папка|• Для новых профилей укажите системный каталог профилей Windows (обычно C:\Users). Программа не меняет системное размещение профилей.`r`n• Для существующего профиля используется фактический путь из ProfileList по SID, даже если он отличается от указанного каталога. Фактический путь каждого профиля выводится в журнале миграции.",
         "Целевое OU (SearchBase)|• Область поиска учетных записей в AD в формате Distinguished Name; пользователи никуда не перемещаются.`r`n• Если настройка отсутствует, программа пытается определить корень домена. При неудаче подставляет DC=domain,DC=local — замените его действительным значением.`r`n• Пример: OU=TerminalUsers,OU=Branch,DC=company,DC=local. Используются SID учетных записей текущего AD; сопоставление разных доменов не реализовано.",
         "Лимит неактивности (дней)|• Используется при аудите для автоматической расстановки галочек; по умолчанию 90 дней.`r`n• Галочку получают включенные учетные записи с полученной датой входа в пределах лимита включительно.`r`n• Изменение лимита не пересчитывает текущую таблицу: запустите аудит повторно или измените отметки вручную.",
@@ -1201,6 +1254,7 @@ $btnHelp.Add_Click({
     # Вкладка 3: Фильтрация и таблица
     $toolsHelp = @(
         "Выбор пользователей|• Для шагов 2-5 используются галочки в столбце «Выбор». Выделение строки цветом само по себе пользователя не выбирает.`r`n• «Выбрать все» и «Снять выбор» действуют на всю таблицу, включая скрытые фильтром строки.`r`n• Без отмеченных пользователей шаги 2-5 не запускаются. Аудит работает независимо от галочек.",
+        "Скрыть «Никогда» (Кнопка)|• Скрывает из таблицы пользователей, у которых нет даты входа («Никогда»).`r`n• Позволяет очистить список от неактивных или служебных учетных записей без удаления их из AD.`r`n• Повторное нажатие кнопки возвращает показ скрытых пользователей.",
         "Только выбранные (Чекбокс)|• Скрывает неотмеченные строки, но не меняет галочки.`r`n• Сочетается с поиском по логину и ФИО. Отмеченные строки, скрытые поиском, тоже участвуют в операциях.",
         "Поиск по логину и ФИО|• Показывает строки, содержащие введенный текст в логине или ФИО, без учета регистра.`r`n• Поиск меняет только видимость строк. Чтобы исключить пользователя из операции, снимите его галочку.",
         "Счетчик (Всего / Выбрано / Объем)|• «Всего» — число строк, загруженных в текущую таблицу; после остановки аудита список может быть неполным.`r`n• «Выбрано» — число всех отмеченных строк, включая скрытые фильтрами.`r`n• «Объем» — суммарный объем данных отмеченных пользователей (рассчитывается по результатам «Оценки объема» или предыдущей миграции).`r`n• При риске нехватки места на целевом диске статус информирует о доступном пространстве и предупреждает об опасности переполнения.",
@@ -1459,6 +1513,12 @@ $btnDeselectAll.Add_Click({
     Update-CountersAndFilter
 })
 
+$btnHideNever.Add_Click({
+    $script:hideNeverLogon = -not $script:hideNeverLogon
+    Update-NeverButtonAppearance
+    Update-CountersAndFilter
+})
+
 $chkOnlySelected.Add_CheckedChanged({
     Update-CountersAndFilter
 })
@@ -1565,22 +1625,164 @@ function Measure-FolderDataSize ($FolderPath) {
     return @{ Bytes = $bytes; Files = $files; Cancelled = $false }
 }
 
-function Get-UserDataTransferSize ([string]$Server, [string]$UserName, [string[]]$Folders) {
-    if ($Global:CancelRequested) { return @{ Bytes = [int64]0; Files = [int64]0; Exists = $false; Cancelled = $true; Details = @{} } }
-    $SrcBase = "\\$Server\C$\Users\$UserName"
-    if (-not (Test-Path -LiteralPath $SrcBase -PathType Container)) {
-        return @{ Bytes = [int64]0; Files = [int64]0; Exists = $false; Cancelled = $false; Details = @{} }
+function Safe-UpdateProgress ($val, $status = "") {
+    if (Get-Command 'Update-Progress' -ErrorAction SilentlyContinue) {
+        Update-Progress $val $status
+    }
+}
+
+$Global:RemoteServerProfileListCache = @{}
+$Global:SourceProfilePathCache = @{}
+
+function Get-RemoteProfileListMapping ([string]$Server) {
+    if ([string]::IsNullOrWhiteSpace($Server)) { return @{} }
+    $ServerKey = $Server.Trim().ToLower()
+    if ($Global:RemoteServerProfileListCache.ContainsKey($ServerKey)) {
+        return $Global:RemoteServerProfileListCache[$ServerKey]
+    }
+
+    $mapping = @{}
+    try {
+        $reg = [Microsoft.Win32.RegistryKey]::OpenRemoteBaseKey(
+            [Microsoft.Win32.RegistryHive]::LocalMachine,
+            $Server.Trim()
+        )
+        if ($reg) {
+            $profileList = $reg.OpenSubKey('SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList')
+            if ($profileList) {
+                foreach ($subName in $profileList.GetSubKeyNames()) {
+                    if ($subName -match '^S-1-5-21-') {
+                        $subKey = $profileList.OpenSubKey($subName)
+                        if ($subKey) {
+                            try {
+                                $pathVal = [string]$subKey.GetValue('ProfileImagePath')
+                                if ($pathVal) {
+                                    $mapping[$subName] = $pathVal
+                                }
+                            } finally {
+                                $subKey.Dispose()
+                            }
+                        }
+                    }
+                }
+                $profileList.Dispose()
+            }
+            $reg.Dispose()
+        }
+    } catch {
+        # Remote registry access is optional; fallback to SMB if unavailable
+    }
+
+    $Global:RemoteServerProfileListCache[$ServerKey] = $mapping
+    return $mapping
+}
+
+function Get-SourceUserProfilePath ([string]$Server, [string]$UserName, [string]$UserSid = $null) {
+    if ([string]::IsNullOrWhiteSpace($Server) -or [string]::IsNullOrWhiteSpace($UserName)) {
+        return $null
+    }
+
+    $Server = $Server.Trim()
+    $UserName = $UserName.Trim()
+    $cacheKey = "$Server|$UserName".ToLower()
+
+    if ($Global:SourceProfilePathCache.ContainsKey($cacheKey)) {
+        return $Global:SourceProfilePathCache[$cacheKey]
+    }
+
+    $defaultPath = "\\$Server\C$\Users\$UserName"
+
+    # Если UserSid не передан, пробуем получить его из AD
+    if ([string]::IsNullOrWhiteSpace($UserSid)) {
+        try {
+            $adUser = Get-ADUser -Identity $UserName -ErrorAction SilentlyContinue
+            if ($adUser -and $adUser.SID) {
+                $UserSid = [string]$adUser.SID.Value
+            }
+        } catch {}
+    }
+
+    # 1. Поиск в ProfileList на сервере-источнике по SID
+    if ($UserSid) {
+        $mapping = Get-RemoteProfileListMapping $Server
+        if ($mapping -and $mapping.ContainsKey($UserSid)) {
+            $rawPath = [string]$mapping[$UserSid]
+            if ($rawPath -match '^([A-Za-z]):\\(.*)$') {
+                $drive = $matches[1]
+                $rest = $matches[2]
+                $uncPath = "\\$Server\$($drive)`$\$rest"
+                if (Test-Path -LiteralPath $uncPath -PathType Container) {
+                    $Global:SourceProfilePathCache[$cacheKey] = $uncPath
+                    return $uncPath
+                }
+            }
+        }
+    }
+
+    # 2. Проверка стандартного пути \\Server\C$\Users\Login
+    if (Test-Path -LiteralPath $defaultPath -PathType Container) {
+        $Global:SourceProfilePathCache[$cacheKey] = $defaultPath
+        return $defaultPath
+    }
+
+    # 3. Fallback: поиск по C$\Users через ACL NTUSER.DAT (если реестр закрыт, а папка переименована)
+    if ($UserSid) {
+        $usersShare = "\\$Server\C$\Users"
+        if (Test-Path -LiteralPath $usersShare -PathType Container) {
+            $subDirs = try { Get-ChildItem -LiteralPath $usersShare -Directory -ErrorAction SilentlyContinue } catch { @() }
+            foreach ($dir in $subDirs) {
+                if ($dir.Name -in @('Public', 'Default', 'Default User', 'All Users')) { continue }
+                $ntuser = Join-Path $dir.FullName "NTUSER.DAT"
+                if (Test-Path -LiteralPath $ntuser -PathType Leaf) {
+                    try {
+                        $acl = Get-Acl -LiteralPath $ntuser -ErrorAction Stop
+                        $sids = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) | ForEach-Object { $_.IdentityReference.Value })
+                        if ($UserSid -in $sids -or $acl.Owner -eq $UserSid) {
+                            $Global:SourceProfilePathCache[$cacheKey] = $dir.FullName
+                            return $dir.FullName
+                        }
+                    } catch {}
+                }
+            }
+        }
+    }
+
+    # Если папка не найдена, возвращаем стандартный путь
+    $Global:SourceProfilePathCache[$cacheKey] = $defaultPath
+    return $defaultPath
+}
+
+function Get-UserDataTransferSize ([string]$Server, [string]$UserName, [string[]]$Folders, [string]$UserSid = $null, [int]$UserIndex = 1, [int]$TotalUsers = 1) {
+    if ($Global:CancelRequested) { return @{ Bytes = [int64]0; Files = [int64]0; Exists = $false; Cancelled = $true; Details = @{}; SourcePath = $null } }
+    $SrcBase = if (Get-Command 'Get-SourceUserProfilePath' -ErrorAction SilentlyContinue) {
+        Get-SourceUserProfilePath $Server $UserName $UserSid
+    } else {
+        "\\$Server\C$\Users\$UserName"
+    }
+    if (-not $SrcBase -or -not (Test-Path -LiteralPath $SrcBase -PathType Container)) {
+        return @{ Bytes = [int64]0; Files = [int64]0; Exists = $false; Cancelled = $false; Details = @{}; SourcePath = $null }
     }
     $totalBytes = [int64]0
     $totalFiles = [int64]0
     $details = [ordered]@{}
 
+    $TotalUsers = [math]::Max(1, $TotalUsers)
+    $UserIndex = [math]::Max(1, [math]::Min($TotalUsers, $UserIndex))
+    $userBase = (($UserIndex - 1) / $TotalUsers) * 100
+    $userSpan = (1 / $TotalUsers) * 100
+    $totalSteps = [math]::Max(1, $Folders.Count + 1)
+    $fIdx = 0
+
     foreach ($folder in $Folders) {
-        if ($Global:CancelRequested) { return @{ Bytes = $totalBytes; Files = $totalFiles; Exists = $true; Cancelled = $true; Details = $details } }
+        if ($Global:CancelRequested) { return @{ Bytes = $totalBytes; Files = $totalFiles; Exists = $true; Cancelled = $true; Details = $details; SourcePath = $SrcBase } }
+        $fIdx++
+        $fPct = [math]::Min(99, [int]($userBase + ($userSpan * (($fIdx - 1) / $totalSteps))))
+        Safe-UpdateProgress $fPct "Оценка объема: $UserName ($UserIndex из $TotalUsers) — $folder ($fIdx из $($Folders.Count))..."
+
         $s = Join-Path $SrcBase $folder
         if (Test-Path -LiteralPath $s -PathType Container) {
             $meas = Measure-FolderDataSize $s
-            if ($meas.Cancelled) { return @{ Bytes = $totalBytes; Files = $totalFiles; Exists = $true; Cancelled = $true; Details = $details } }
+            if ($meas.Cancelled) { return @{ Bytes = $totalBytes; Files = $totalFiles; Exists = $true; Cancelled = $true; Details = $details; SourcePath = $SrcBase } }
             $totalBytes += $meas.Bytes
             $totalFiles += $meas.Files
             $details[$folder] = @{ Bytes = $meas.Bytes; Files = $meas.Files }
@@ -1588,8 +1790,11 @@ function Get-UserDataTransferSize ([string]$Server, [string]$UserName, [string[]
     }
 
     # 1С:Предприятие (ibases.v8i, 1CEStart.cfg)
+    $shouldMeasure1C = ($Folders -contains 'AppData\Roaming\1C\1CEStart') -or ($Folders.Count -gt 1)
     $src1c = Join-Path $SrcBase "AppData\Roaming\1C\1CEStart"
-    if (Test-Path -LiteralPath $src1c -PathType Container) {
+    if ($shouldMeasure1C -and (Test-Path -LiteralPath $src1c -PathType Container)) {
+        $fPct = [math]::Min(99, [int]($userBase + ($userSpan * ($fIdx / $totalSteps))))
+        Safe-UpdateProgress $fPct "Оценка объема: $UserName ($UserIndex из $TotalUsers) — Настройки 1С..."
         $files1c = 0
         $bytes1c = [int64]0
         foreach ($file in @('ibases.v8i', '1CEStart.cfg')) {
@@ -1611,7 +1816,7 @@ function Get-UserDataTransferSize ([string]$Server, [string]$UserName, [string[]
         }
     }
 
-    return @{ Bytes = $totalBytes; Files = $totalFiles; Exists = $true; Cancelled = $false; Details = $details }
+    return @{ Bytes = $totalBytes; Files = $totalFiles; Exists = $true; Cancelled = $false; Details = $details; SourcePath = $SrcBase }
 }
 
 function Update-Progress ($val, $status = "") {
@@ -1642,6 +1847,7 @@ function Set-UiBusy ($busy, $statusText = "") {
     $btnSaveList.Enabled = -not $busy -and $gridUsers.Rows.Count -gt 0
     $btnSelectAll.Enabled = -not $busy
     $btnDeselectAll.Enabled = -not $busy
+    $btnHideNever.Enabled = -not $busy
     $txtSearch.Enabled = -not $busy
     $chkOnlySelected.Enabled = -not $busy
 
@@ -1780,8 +1986,8 @@ $btnAudit.Add_Click({
             }
 
             $cur++
-            $pct = [math]::Min(100, [int](($cur / $total) * 100))
-            Update-Progress $pct "Аудит пользователей: $cur из $total"
+            $startPct = [math]::Min(99, [int]((($cur - 1) / $total) * 100))
+            Update-Progress $startPct "Аудит пользователей: $cur из $total..."
             if ($cur % 5 -eq 0 -or $cur -eq $total) {
                 Write-GuiLog "Аудит пользователей: $cur/$total..." "INFO"
             }
@@ -2732,23 +2938,61 @@ function Import-ClassicOutlookProfile ($Profile, [string]$SourceDirectory) {
     }
 }
 
-function Sync-UserFiles ($UserName, $isDelta, [switch]$MigrateOutlook) {
-    try { return (Invoke-UserFileSync $UserName $isDelta -MigrateOutlook:$MigrateOutlook) }
+function Sync-UserFiles ($UserName, $isDelta, [switch]$MigrateOutlook, [string]$UserSid = $null, [int]$UserIndex = 1, [int]$TotalUsers = 1) {
+    try { return (Invoke-UserFileSync $UserName $isDelta -MigrateOutlook:$MigrateOutlook -UserSid $UserSid -UserIndex $UserIndex -TotalUsers $TotalUsers) }
     catch {
         Write-GuiLog "[$UserName] Миграция не выполнена: $($_.Exception.Message)" "ERROR"
         return $false
     }
 }
 
-function Invoke-UserFileSync ($UserName, $isDelta, [switch]$MigrateOutlook) {
+function Invoke-UserFileSync ($UserName, $isDelta, [switch]$MigrateOutlook, [string]$UserSid = $null, [int]$UserIndex = 1, [int]$TotalUsers = 1) {
     if ($Global:CancelRequested) { return $false }
 
-    $SrcBase = "\\$($txtSrc.Text.Trim())\C$\Users\$UserName"
+    function local:Report-Progress ($val, $msg) {
+        if (Get-Command 'Update-Progress' -ErrorAction SilentlyContinue) {
+            Update-Progress $val $msg
+        }
+    }
 
-    if (-not (Test-Path $SrcBase)) {
+    $TotalUsers = [math]::Max(1, $TotalUsers)
+    $UserIndex = [math]::Max(1, [math]::Min($TotalUsers, $UserIndex))
+    $userBase = (($UserIndex - 1) / $TotalUsers) * 100
+    $userSpan = (1 / $TotalUsers) * 100
+    $actionName = if ($isDelta) { "Докачка (/XO)" } else { "Миграция" }
+    $copyVerb = if ($isDelta) { "Докачка" } else { "Копирование" }
+    $shouldSync1C = if ($isDelta) {
+        $Global:Config.TargetFolders -contains 'AppData\Roaming\1C\1CEStart'
+    } else {
+        ($Global:Config.TargetFolders -contains 'AppData\Roaming\1C\1CEStart') -or ($Global:Config.TargetFolders.Count -gt 1)
+    }
+    $extra1C = if ($shouldSync1C) { 1 } else { 0 }
+    $totalSubSteps = [math]::Max(1, $Global:Config.TargetFolders.Count + $extra1C + 1)
+    $subStep = 0
+
+    $srcServer = $txtSrc.Text.Trim()
+    $subPct = [math]::Min(99, [int]($userBase + ($userSpan * ($subStep / $totalSubSteps))))
+    Report-Progress $subPct "$($actionName): $UserName ($UserIndex из $TotalUsers) — Поиск источника..."
+
+    $SrcBase = if (Get-Command 'Get-SourceUserProfilePath' -ErrorAction SilentlyContinue) {
+        Get-SourceUserProfilePath $srcServer $UserName $UserSid
+    } else {
+        "\\$srcServer\C$\Users\$UserName"
+    }
+
+    if (-not $SrcBase -or -not (Test-Path -LiteralPath $SrcBase -PathType Container)) {
         Write-GuiLog "[$UserName] Профиль-источник не найден ($SrcBase)" "WARN"
         return $false
     }
+
+    $srcFolder = [System.IO.Path]::GetFileName($SrcBase)
+    if ($srcFolder.ToLower() -ne $UserName.ToLower()) {
+        Write-GuiLog "[$UserName] Фактическая папка на источнике: $srcFolder (определена по SID)." "INFO"
+    }
+
+    $subPct = [math]::Min(99, [int]($userBase + ($userSpan * (0.5 / $totalSubSteps))))
+    Report-Progress $subPct "$($actionName): $UserName ($UserIndex из $TotalUsers) — Подготовка целевого профиля..."
+
     $profile = Get-UserProfileContext $UserName -Create -AdoptExisting:(-not $isDelta)
     $DstBase = $profile.Path
     Write-GuiLog "[$UserName] SID $($profile.Sid), целевой профиль: $DstBase" "INFO"
@@ -2758,10 +3002,19 @@ function Invoke-UserFileSync ($UserName, $isDelta, [switch]$MigrateOutlook) {
     }
     $copyOk = $true
     $folderIndex = 0
+    $copiedFolders = @()
 
     foreach ($folder in $Global:Config.TargetFolders) {
         if ($Global:CancelRequested) { return $false }
+        if ($folder -eq 'AppData\Roaming\1C\1CEStart') {
+            # 1C синхронизируется специализированным блоком ниже (только ibases.v8i и 1CEStart.cfg)
+            continue
+        }
         $folderIndex++
+        $subStep++
+
+        $subPct = [math]::Min(99, [int]($userBase + ($userSpan * ($subStep / $totalSubSteps))))
+        Report-Progress $subPct "$($copyVerb): $UserName ($UserIndex из $TotalUsers) — $folder ($folderIndex из $($Global:Config.TargetFolders.Count))..."
 
         $s = Join-Path $SrcBase $folder
         $d = Join-Path $DstBase $folder
@@ -2791,6 +3044,8 @@ function Invoke-UserFileSync ($UserName, $isDelta, [switch]$MigrateOutlook) {
         if ($resCode -lt 0 -or $resCode -ge 8) {
             $copyOk = $false
             Write-GuiLog "[$UserName] Ошибка копирования $folder (Robocopy: $resCode). Лог: $log" "ERROR"
+        } else {
+            $copiedFolders += $folder
         }
         [System.Windows.Forms.Application]::DoEvents()
     }
@@ -2801,7 +3056,10 @@ function Invoke-UserFileSync ($UserName, $isDelta, [switch]$MigrateOutlook) {
     $Src1C = Join-Path $SrcBase "AppData\Roaming\1C\1CEStart"
     $Dst1C = Join-Path $DstBase "AppData\Roaming\1C\1CEStart"
     Assert-ProfileTargetPath $DstBase 'AppData\Roaming\1C\1CEStart'
-    if (Test-Path $Src1C) {
+    if ($shouldSync1C -and (Test-Path $Src1C)) {
+        $subStep++
+        $subPct = [math]::Min(99, [int]($userBase + ($userSpan * ($subStep / $totalSubSteps))))
+        Report-Progress $subPct "$($actionName): $UserName ($UserIndex из $TotalUsers) — Настройки 1С..."
         if (-not (Test-Path $Dst1C)) { New-Item -Path $Dst1C -ItemType Directory -Force | Out-Null }
         Write-GuiLog "[$UserName] Синхронизация настроек 1C (список баз)..." "INFO"
         $args1c = @("$Src1C", "$Dst1C", "ibases.v8i", "1CEStart.cfg", "/COPY:DAT", "/R:1", "/W:1", "/NP")
@@ -2813,6 +3071,7 @@ function Invoke-UserFileSync ($UserName, $isDelta, [switch]$MigrateOutlook) {
             Write-GuiLog "[$UserName] Ошибка копирования настроек 1С (Robocopy: $res1c)." "ERROR"
         } else {
             Write-GuiLog "[$UserName] Настройки 1С скопированы." "INFO"
+            $copiedFolders += 'AppData\Roaming\1C\1CEStart'
         }
     }
     [System.Windows.Forms.Application]::DoEvents()
@@ -2820,8 +3079,14 @@ function Invoke-UserFileSync ($UserName, $isDelta, [switch]$MigrateOutlook) {
     if ($Global:CancelRequested) { return $false }
 
     # ACL
+    $subPct = [math]::Min(99, [int]($userBase + ($userSpan * (($totalSubSteps - 0.5) / $totalSubSteps))))
+    Report-Progress $subPct "$($actionName): $UserName ($UserIndex из $TotalUsers) — Настройка прав ACL..."
     Write-GuiLog "[$UserName] Применение прав доступа (ACL)..." "INFO"
-    Apply-SingleACL $profile
+    if ($isDelta) {
+        Apply-SingleACL $profile -TargetFolders $copiedFolders -DeltaOnly
+    } else {
+        Apply-SingleACL $profile
+    }
     Write-GuiLog "[$UserName] Права доступа (ACL) настроены." "INFO"
     if ($copyOk -and $MigrateOutlook -and -not $isDelta -and -not $Global:CancelRequested) {
         try { Import-ClassicOutlookProfile $profile $SrcBase }
@@ -2843,15 +3108,29 @@ function Invoke-ProfileAclCommand ([string[]]$Arguments) {
     if ($Global:CancelRequested -or $code -ne 0) { throw "Не удалось применить ACL (icacls: $code)." }
 }
 
-function Apply-SingleACL ($Profile) {
+function Apply-SingleACL ($Profile, [string[]]$TargetFolders = $null, [switch]$DeltaOnly) {
     Assert-ProfileOffline $Profile
     Assert-ProfileFiles $Profile
     $userSid = '*' + $Profile.Sid
     $path = $Profile.Path
+
+    if ($DeltaOnly) {
+        $foldersToApply = if ($TargetFolders -and $TargetFolders.Count -gt 0) { $TargetFolders } else { @($Global:Config.TargetFolders) }
+        foreach ($folder in $foldersToApply) {
+            Assert-ProfileTargetPath $path $folder
+            $target = Join-Path $path $folder
+            if (Test-Path -LiteralPath $target -PathType Container) {
+                Invoke-ProfileAclCommand @($target, '/setowner', $userSid, '/T', '/L', '/C', '/Q')
+                Invoke-ProfileAclCommand @($target, '/grant', "${userSid}:(OI)(CI)F", '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F', '/T', '/L', '/C', '/Q')
+            }
+        }
+        return
+    }
+
     Invoke-ProfileAclCommand @($path, '/inheritance:d', '/L', '/C', '/Q')
-    Invoke-ProfileAclCommand @($path, '/remove', '*S-1-1-0', '*S-1-5-11', '*S-1-5-32-545', '/T', '/L', '/C', '/Q')
     Invoke-ProfileAclCommand @($path, '/setowner', $userSid, '/L', '/C', '/Q')
-    Invoke-ProfileAclCommand @($path, '/grant', "${userSid}:(OI)(CI)F", '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F', '/L', '/C', '/Q')
+    # Объединенный одиночный рекурсивный проход вместо 3+ повторных обходов дерева (ускоряет в 2-3 раза)
+    Invoke-ProfileAclCommand @($path, '/remove', '*S-1-1-0', '*S-1-5-11', '*S-1-5-32-545', '/grant', "${userSid}:(OI)(CI)F", '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F', '/T', '/L', '/C', '/Q')
 
     # Защита и владение файлов реестра (NTUSER.DAT, NTUSER.DAT.LOG*, ntuser.ini)
     $hive = Join-Path $path 'NTUSER.DAT'
@@ -2865,18 +3144,8 @@ function Apply-SingleACL ($Profile) {
         Invoke-ProfileAclCommand @($nu.FullName, '/grant', "${userSid}:F", '*S-1-5-18:F', '*S-1-5-32-544:F', '/L', '/C', '/Q')
     }
 
-    # Рекурсивные права на ветку AppData (критично для gpsvc и создания GroupPolicy.ini)
-    $appData = Join-Path $path 'AppData'
-    if (Test-Path -LiteralPath $appData -PathType Container) {
-        Invoke-ProfileAclCommand @($appData, '/grant', "${userSid}:(OI)(CI)F", '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F', '/T', '/L', '/C', '/Q')
-    }
-
     foreach ($folder in @($Global:Config.TargetFolders) + @('AppData\Roaming\1C\1CEStart')) {
         Assert-ProfileTargetPath $path $folder
-        $target = Join-Path $path $folder
-        if (Test-Path -LiteralPath $target -PathType Container) {
-            Invoke-ProfileAclCommand @($target, '/grant', "${userSid}:(OI)(CI)F", '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F', '/T', '/L', '/C', '/Q')
-        }
     }
 }
 
@@ -2917,11 +3186,12 @@ $btnEstimate.Add_Click({
 
             $cur++
             $user = [string]$row.Cells[1].Value
-            $pct = [math]::Min(100, [int](($cur / $totalUsers) * 100))
-            Update-Progress $pct "Оценка объема: $user ($cur из $totalUsers)"
+            $userStartPct = [math]::Min(99, [int]((($cur - 1) / $totalUsers) * 100))
+            Update-Progress $userStartPct "Оценка объема: $user ($cur из $totalUsers)..."
             Write-GuiLog "[$cur/$totalUsers] Оценка профиля: $user..." "INFO"
 
-            $res = Get-UserDataTransferSize $srcServer $user $Global:Config.TargetFolders
+            $userSid = if ($row.Tag -and $row.Tag.PSObject.Properties['Sid'] -and $row.Tag.Sid) { [string]$row.Tag.Sid } else { $null }
+            $res = Get-UserDataTransferSize $srcServer $user $Global:Config.TargetFolders $userSid $cur $totalUsers
 
             if ($Global:CancelRequested -or $res.Cancelled) {
                 Write-GuiLog "Оценка объема прервана пользователем." "WARN"
@@ -2933,7 +3203,7 @@ $btnEstimate.Add_Click({
                 $row.Cells[7].Value = "Не найден"
                 $row.Cells[7].Style.ForeColor = [System.Drawing.Color]::DarkOrange
                 $row.Cells[7].ToolTipText = "Профиль $user не найден на сервере-источнике \\$srcServer"
-                $row.Tag = [pscustomobject]@{ EstimatedBytes = [int64]0; EstimatedFiles = [int64]0; ProfileExists = $false; Details = @{} }
+                $row.Tag = [pscustomobject]@{ EstimatedBytes = [int64]0; EstimatedFiles = [int64]0; ProfileExists = $false; Details = @{}; Sid = $userSid }
                 Write-GuiLog "[$user] Папка профиля на источнике не найдена." "WARN"
             } else {
                 $grandBytes += $res.Bytes
@@ -2941,10 +3211,17 @@ $btnEstimate.Add_Click({
                 $fmtSize = Format-ByteSize $res.Bytes
                 $row.Cells[7].Value = $fmtSize
                 $row.Cells[7].Style.ForeColor = [System.Drawing.Color]::FromArgb(15, 23, 42)
-                $row.Cells[7].ToolTipText = "Файлов: $($res.Files) | Объем: $(Format-ByteSize $res.Bytes) ($($res.Bytes) байт). Двойной клик — детализация."
-                $row.Tag = [pscustomobject]@{ EstimatedBytes = $res.Bytes; EstimatedFiles = $res.Files; ProfileExists = $true; Details = $res.Details }
+                $srcFolder = if ($res.SourcePath) { [System.IO.Path]::GetFileName($res.SourcePath) } else { $user }
+                $folderTip = if ($srcFolder.ToLower() -ne $user.ToLower()) { " | Источник: $srcFolder (по SID)" } else { "" }
+                $row.Cells[7].ToolTipText = "Файлов: $($res.Files) | Объем: $(Format-ByteSize $res.Bytes) ($($res.Bytes) байт)$folderTip. Двойной клик — детализация."
+                $row.Tag = [pscustomobject]@{ EstimatedBytes = $res.Bytes; EstimatedFiles = $res.Files; ProfileExists = $true; Details = $res.Details; Sid = $userSid; SourcePath = $res.SourcePath }
+                if ($srcFolder.ToLower() -ne $user.ToLower()) {
+                    Write-GuiLog "[$user] Найдена фактическая папка источника: $srcFolder (по SID $userSid)." "INFO"
+                }
                 Write-GuiLog "[$user] Оценочный объем: $fmtSize (файлов: $($res.Files))." "INFO"
             }
+            $userEndPct = [math]::Min(100, [int](($cur / $totalUsers) * 100))
+            Update-Progress $userEndPct "Оценка объема: $user ($cur из $totalUsers) завершена"
             [System.Windows.Forms.Application]::DoEvents()
         }
 
@@ -3131,14 +3408,15 @@ $btnSync.Add_Click({
 
             $cur++
             $user = $row.Cells[1].Value
-            $pct = [math]::Min(100, [int](($cur / $rowsToMigrate.Count) * 100))
-            Update-Progress $pct "Миграция: $user ($cur из $($rowsToMigrate.Count))"
+            $userStartPct = [math]::Min(99, [int]((($cur - 1) / $rowsToMigrate.Count) * 100))
+            Update-Progress $userStartPct "Миграция: $user ($cur из $($rowsToMigrate.Count))..."
             Write-GuiLog "[$cur/$($rowsToMigrate.Count)] Копирование профиля: $user..." "INFO"
 
+            $userSid = if ($row.Tag -and $row.Tag.PSObject.Properties['Sid'] -and $row.Tag.Sid) { [string]$row.Tag.Sid } else { $null }
             $ok = if ($includeOutlook) {
-                Sync-UserFiles $user $false -MigrateOutlook
+                Sync-UserFiles $user $false -MigrateOutlook -UserSid $userSid -UserIndex $cur -TotalUsers $rowsToMigrate.Count
             } else {
-                Sync-UserFiles $user $false
+                Sync-UserFiles $user $false -UserSid $userSid -UserIndex $cur -TotalUsers $rowsToMigrate.Count
             }
             if ($Global:CancelRequested) {
                 $row.Cells[5].Value = "Прервано"
@@ -3158,6 +3436,8 @@ $btnSync.Add_Click({
                 $row.Cells[5].Value = "Ошибка"
                 $row.Cells[5].Style.ForeColor = [System.Drawing.Color]::Red
             }
+            $userEndPct = [math]::Min(100, [int](($cur / $rowsToMigrate.Count) * 100))
+            Update-Progress $userEndPct "Миграция: $user ($cur из $($rowsToMigrate.Count)) завершена"
             [System.Windows.Forms.Application]::DoEvents()
         }
 
@@ -3196,11 +3476,12 @@ $btnDelta.Add_Click({
 
             $cur++
             $user = $row.Cells[1].Value
-            $pct = [math]::Min(100, [int](($cur / $selectedRows.Count) * 100))
-            Update-Progress $pct "Докачка дельты: $user ($cur из $($selectedRows.Count))"
+            $userStartPct = [math]::Min(99, [int]((($cur - 1) / $selectedRows.Count) * 100))
+            Update-Progress $userStartPct "Докачка дельты: $user ($cur из $($selectedRows.Count))..."
             Write-GuiLog "[$cur/$($selectedRows.Count)] Докачка дельты: $user..." "INFO"
 
-            $ok = Sync-UserFiles $user $true
+            $userSid = if ($row.Tag -and $row.Tag.PSObject.Properties['Sid'] -and $row.Tag.Sid) { [string]$row.Tag.Sid } else { $null }
+            $ok = Sync-UserFiles $user $true -UserSid $userSid -UserIndex $cur -TotalUsers $selectedRows.Count
             if ($Global:CancelRequested) {
                 $row.Cells[5].Value = "Прервано"
                 $row.Cells[5].Style.ForeColor = [System.Drawing.Color]::DarkOrange
@@ -3215,6 +3496,8 @@ $btnDelta.Add_Click({
                 $row.Cells[5].Value = "Ошибка"
                 $row.Cells[5].Style.ForeColor = [System.Drawing.Color]::Red
             }
+            $userEndPct = [math]::Min(100, [int](($cur / $selectedRows.Count) * 100))
+            Update-Progress $userEndPct "Докачка дельты: $user ($cur из $($selectedRows.Count)) завершена"
             [System.Windows.Forms.Application]::DoEvents()
         }
 
@@ -3280,15 +3563,92 @@ $menuItemAcl.Add_Click({
     }
 })
 
-$menuItemOpen = $ctxGrid.Items.Add("Открыть папку профиля в Проводнике")
-$menuItemOpen.Add_Click({
+$ctxGrid.Items.Add("-") | Out-Null
+
+$menuItemOpenDst = $ctxGrid.Items.Add("Открыть папку на целевом сервере")
+$menuItemOpenDst.Add_Click({
     if ($gridUsers.CurrentRow -and $gridUsers.CurrentRow.Index -ge 0) {
         $user = [string]$gridUsers.CurrentRow.Cells[1].Value
-        $path = ConvertTo-LocalProfilePath (Join-Path $Global:Config.ProfilesRoot $user)
-        if (Test-Path -LiteralPath $path) {
-            Start-Process "explorer.exe" -ArgumentList "`"$path`""
+        $tag = $gridUsers.CurrentRow.Tag
+        $dstPath = $null
+        if ($tag -and $tag.PSObject.Properties['Inspection'] -and $tag.Inspection -and $tag.Inspection.Profile -and $tag.Inspection.Profile.Path) {
+            $dstPath = $tag.Inspection.Profile.Path
+        }
+        if (-not $dstPath -or -not (Test-Path -LiteralPath $dstPath)) {
+            $dstPath = ConvertTo-LocalProfilePath (Join-Path $Global:Config.ProfilesRoot $user)
+        }
+        if (Test-Path -LiteralPath $dstPath) {
+            Start-Process "explorer.exe" -ArgumentList "`"$dstPath`""
         } else {
-            [void][System.Windows.Forms.MessageBox]::Show($form, "Папка профиля еще не существует на целевом сервере: $path", "Информация", "OK", "Information")
+            [void][System.Windows.Forms.MessageBox]::Show($form, "Папка профиля еще не существует на целевом сервере: $dstPath", "Информация", "OK", "Information")
+        }
+    }
+})
+
+$menuItemOpenSrc = $ctxGrid.Items.Add("Открыть папку на сервере-источнике")
+$menuItemOpenSrc.Add_Click({
+    if ($gridUsers.CurrentRow -and $gridUsers.CurrentRow.Index -ge 0) {
+        $srcServer = $txtSrc.Text.Trim()
+        if ([string]::IsNullOrWhiteSpace($srcServer)) {
+            [void][System.Windows.Forms.MessageBox]::Show($form, "Укажите сервер-источник в поле наверху!", "Внимание", "OK", "Warning")
+            return
+        }
+        $user = [string]$gridUsers.CurrentRow.Cells[1].Value
+        $userSid = if ($gridUsers.CurrentRow.Tag -and $gridUsers.CurrentRow.Tag.PSObject.Properties['Sid'] -and $gridUsers.CurrentRow.Tag.Sid) { [string]$gridUsers.CurrentRow.Tag.Sid } else { $null }
+        $srcPath = if (Get-Command 'Get-SourceUserProfilePath' -ErrorAction SilentlyContinue) {
+            Get-SourceUserProfilePath $srcServer $user $userSid
+        } else {
+            "\\$srcServer\C$\Users\$user"
+        }
+        if ($srcPath -and (Test-Path -LiteralPath $srcPath)) {
+            Start-Process "explorer.exe" -ArgumentList "`"$srcPath`""
+        } else {
+            [void][System.Windows.Forms.MessageBox]::Show($form, "Папка профиля на сервере-источнике не найдена или недоступна: $srcPath", "Информация", "OK", "Information")
+        }
+    }
+})
+
+$menuItemOpenBoth = $ctxGrid.Items.Add("Открыть обе папки (источник и цель)")
+$menuItemOpenBoth.Add_Click({
+    if ($gridUsers.CurrentRow -and $gridUsers.CurrentRow.Index -ge 0) {
+        $user = [string]$gridUsers.CurrentRow.Cells[1].Value
+        $srcServer = $txtSrc.Text.Trim()
+        $userSid = if ($gridUsers.CurrentRow.Tag -and $gridUsers.CurrentRow.Tag.PSObject.Properties['Sid'] -and $gridUsers.CurrentRow.Tag.Sid) { [string]$gridUsers.CurrentRow.Tag.Sid } else { $null }
+
+        $srcPath = if (-not [string]::IsNullOrWhiteSpace($srcServer)) {
+            if (Get-Command 'Get-SourceUserProfilePath' -ErrorAction SilentlyContinue) {
+                Get-SourceUserProfilePath $srcServer $user $userSid
+            } else {
+                "\\$srcServer\C$\Users\$user"
+            }
+        } else { $null }
+
+        $tag = $gridUsers.CurrentRow.Tag
+        $dstPath = $null
+        if ($tag -and $tag.PSObject.Properties['Inspection'] -and $tag.Inspection -and $tag.Inspection.Profile -and $tag.Inspection.Profile.Path) {
+            $dstPath = $tag.Inspection.Profile.Path
+        }
+        if (-not $dstPath -or -not (Test-Path -LiteralPath $dstPath)) {
+            $dstPath = ConvertTo-LocalProfilePath (Join-Path $Global:Config.ProfilesRoot $user)
+        }
+
+        $opened = $false
+        if ($srcPath -and (Test-Path -LiteralPath $srcPath)) {
+            Start-Process "explorer.exe" -ArgumentList "`"$srcPath`""
+            $opened = $true
+        } else {
+            Write-GuiLog "[$user] Папка на сервере-источнике не найдена: $srcPath" "WARN"
+        }
+
+        if (Test-Path -LiteralPath $dstPath) {
+            Start-Process "explorer.exe" -ArgumentList "`"$dstPath`""
+            $opened = $true
+        } else {
+            Write-GuiLog "[$user] Папка на целевом сервере не найдена: $dstPath" "WARN"
+        }
+
+        if (-not $opened) {
+            [void][System.Windows.Forms.MessageBox]::Show($form, "Ни одна из папок профиля ($user) не найдена или недоступна.", "Информация", "OK", "Information")
         }
     }
 })
@@ -3640,9 +4000,9 @@ $btnValidate.Add_Click({
             }
 
             $cur++
-            $pct = if ($total -gt 0) { [math]::Min(100, [int](($cur / $total) * 100)) } else { 0 }
+            $startPct = if ($total -gt 0) { [math]::Min(99, [int]((($cur - 1) / $total) * 100)) } else { 0 }
             $user = $row.Cells[1].Value
-            Update-Progress $pct "Валидация: $user ($cur из $total)"
+            Update-Progress $startPct "Валидация: $user ($cur из $total)..."
 
             try {
                 $check = Get-ProfileReadiness $user
@@ -3665,6 +4025,8 @@ $btnValidate.Add_Click({
                 if ($_.Exception.Message -match 'ACL') { $aclIssueRows += $row }
             }
             $row.Cells[6].ToolTipText = $row.Cells[6].Value
+            $endPct = if ($total -gt 0) { [math]::Min(100, [int](($cur / $total) * 100)) } else { 0 }
+            Update-Progress $endPct "Валидация: $user ($cur из $total) завершена"
             [System.Windows.Forms.Application]::DoEvents()
         }
 
