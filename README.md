@@ -2,7 +2,7 @@
 
 Графическая утилита для администратора RDS. Работает на целевом сервере Windows и переносит выбранные папки профилей пользователей одного домена с исходного сервера по SMB.
 
-[Скачать готовый EXE](https://github.com/altshift902/RDS-Profile-Migration-Toolkit/raw/refs/heads/main/GUI/ProfileMigrator_GUI.exe)
+**[Скачать версию 1.3.0 для Windows (.exe)](https://github.com/altshift902/RDS-Profile-Migration-Toolkit/releases/download/v1.3.0/ProfileMigrator_GUI.exe)** · [Все релизы](https://github.com/altshift902/RDS-Profile-Migration-Toolkit/releases) · [История изменений](CHANGELOG.md)
 
 ## Сборка и запуск
 
